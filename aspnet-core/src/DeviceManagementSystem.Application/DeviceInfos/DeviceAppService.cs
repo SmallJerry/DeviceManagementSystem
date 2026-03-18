@@ -1,4 +1,5 @@
 ﻿using Abp.Auditing;
+using Abp.Dependency;
 using Abp.Domain.Repositories;
 using Abp.Domain.Uow;
 using Abp.Linq.Extensions;
@@ -8,6 +9,9 @@ using DeviceManagementSystem.BasicDataManagement;
 using DeviceManagementSystem.DeviceInfos.Dto;
 using DeviceManagementSystem.DeviceInfos.Utils;
 using DeviceManagementSystem.FileInfos;
+using DeviceManagementSystem.Maintenances;
+using DeviceManagementSystem.Maintenances.Dto;
+using DeviceManagementSystem.Maintenances.Interface;
 using DeviceManagementSystem.Users;
 using DeviceManagementSystem.Utils.Common;
 using DeviceManagementSystem.WorkFlows;
@@ -48,6 +52,16 @@ namespace DeviceManagementSystem.DeviceInfos
         private readonly IFlowInstanceAppService _flowInstanceAppService;
         private readonly IRepository<FlowInstanceHistories, Guid> _historyRepository;
         private readonly IRepository<FlowNodeTasks, Guid> _taskRepository;
+        // 新增保养计划相关仓储
+        private readonly IRepository<MaintenancePlans, Guid> _maintenancePlanRepository;
+        private readonly IRepository<DeviceMaintenancePlanRelation, Guid> _deviceMaintenancePlanRelationRepository;
+        private readonly IRepository<MaintenanceTemplates, Guid> _maintenanceTemplateRepository;
+
+        //新增保养工单相关仓储
+        private readonly IRepository<MaintenanceTasks, Guid> _maintenanceTaskRepository;
+        private readonly IRepository<MaintenanceTaskItems, Guid> _maintenanceTaskItemsRepository;
+
+
 
         // 字段标签映射（用于变更对比显示）
         private readonly Dictionary<string, string> _fieldLabels = new Dictionary<string, string>
@@ -95,6 +109,11 @@ namespace DeviceManagementSystem.DeviceInfos
         /// <param name="flowInstanceAppService"></param>
         /// <param name="historyRepository"></param>
         /// <param name="taskRepository"></param>
+        /// <param name="maintenancePlanRepository"></param>
+        /// <param name="deviceMaintenancePlanRelationRepository"></param>
+        /// <param name="maintenanceTemplateRepository"></param>
+        /// <param name="maintenanceTaskRepository"></param>
+        /// <param name="maintenanceTaskItemsRepository"></param>
         public DeviceAppService(
             IRepository<Devices, Guid> deviceRepository,
             IRepository<DeviceChangeApplications, Guid> changeApplyRepository,
@@ -111,7 +130,12 @@ namespace DeviceManagementSystem.DeviceInfos
             IUserAppService userAppService,
             IFlowInstanceAppService flowInstanceAppService,
             IRepository<FlowInstanceHistories, Guid> historyRepository,
-            IRepository<FlowNodeTasks, Guid> taskRepository)
+            IRepository<FlowNodeTasks, Guid> taskRepository,
+            IRepository<MaintenancePlans, Guid> maintenancePlanRepository,
+            IRepository<DeviceMaintenancePlanRelation, Guid> deviceMaintenancePlanRelationRepository,
+            IRepository<MaintenanceTemplates, Guid> maintenanceTemplateRepository,
+            IRepository<MaintenanceTasks, Guid> maintenanceTaskRepository,
+            IRepository<MaintenanceTaskItems, Guid> maintenanceTaskItemsRepository)
         {
             _deviceRepository = deviceRepository;
             _changeApplyRepository = changeApplyRepository;
@@ -129,6 +153,11 @@ namespace DeviceManagementSystem.DeviceInfos
             _flowInstanceAppService = flowInstanceAppService;
             _historyRepository = historyRepository;
             _taskRepository = taskRepository;
+            _maintenancePlanRepository = maintenancePlanRepository;
+            _deviceMaintenancePlanRelationRepository = deviceMaintenancePlanRelationRepository;
+            _maintenanceTemplateRepository = maintenanceTemplateRepository;
+            _maintenanceTaskRepository = maintenanceTaskRepository;
+            _maintenanceTaskItemsRepository = maintenanceTaskItemsRepository;
         }
 
         #region 设备列表查询
@@ -193,6 +222,38 @@ namespace DeviceManagementSystem.DeviceInfos
             }
         }
 
+
+        /// <summary>
+        /// 获取设备列表（用于选择器）
+        /// </summary>
+        [HttpGet]
+        [DisableAuditing]
+        public async Task<CommonResult<List<DeviceSimpleDto>>> GetSimpleList()
+        {
+            try
+            {
+                var devices = await _deviceRepository.GetAll()
+                    .Where(d => d.IsDeleted == false)
+                    .OrderByDescending(d => d.CreationTime)
+                    .Select(d => new DeviceSimpleDto
+                    {
+                        Id = d.Id,
+                        DeviceCode = d.DeviceCode,
+                        DeviceName = d.DeviceName,
+                        DeviceStatus = d.DeviceStatus
+                    })
+                    .ToListAsync();
+
+                return CommonResult<List<DeviceSimpleDto>>.Success(devices);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("获取设备列表失败", ex);
+                return CommonResult<List<DeviceSimpleDto>>.Error($"获取设备列表失败: {ex.Message}");
+            }
+        }
+
+
         /// <summary>
         /// 获取设备详情
         /// </summary>
@@ -234,6 +295,7 @@ namespace DeviceManagementSystem.DeviceInfos
                     var supplier = await _supplierRepository.FirstOrDefaultAsync(supplierId.Value);
                     supplierName = supplier?.SupplierName;
                 }
+
 
                 // 映射基础信息
                 var dto = await MapToDeviceDto(device, typeId, typeName, supplierId, supplierName);
@@ -1050,7 +1112,38 @@ namespace DeviceManagementSystem.DeviceInfos
                     NewData = draftData,
 
                     // 附件
-                    TechnicalAttachmentWithCategories = attachments
+                    TechnicalAttachmentWithCategories = attachments,
+
+
+                    // 保养计划
+                    MonthlyMaintenance = draftData?.MonthlyMaintenance != null
+                ? new MaintenancePlanData
+                {
+                    TemplateId = draftData.MonthlyMaintenance.TemplateId,
+                    TemplateName = await GetTemplateName(draftData.MonthlyMaintenance.TemplateId)
+                }
+                : null,
+                    QuarterlyMaintenance = draftData?.QuarterlyMaintenance != null
+                ? new MaintenancePlanData
+                {
+                    TemplateId = draftData.QuarterlyMaintenance.TemplateId,
+                    TemplateName = await GetTemplateName(draftData.QuarterlyMaintenance.TemplateId)
+                }
+                : null,
+                    HalfYearlyMaintenance = draftData?.HalfYearlyMaintenance != null
+                ? new MaintenancePlanData
+                {
+                    TemplateId = draftData.HalfYearlyMaintenance.TemplateId,
+                    TemplateName = await GetTemplateName(draftData.HalfYearlyMaintenance.TemplateId)
+                }
+                : null,
+                    AnnualMaintenance = draftData?.AnnualMaintenance != null
+                ? new MaintenancePlanData
+                {
+                    TemplateId = draftData.AnnualMaintenance.TemplateId,
+                    TemplateName = await GetTemplateName(draftData.AnnualMaintenance.TemplateId)
+                }
+                : null
                 };
 
                 return CommonResult<ChangeApplyDetailDto>.Success(result);
@@ -1059,6 +1152,27 @@ namespace DeviceManagementSystem.DeviceInfos
             {
                 Logger.Error("获取草稿详情失败", ex);
                 return CommonResult<ChangeApplyDetailDto>.Error("获取草稿详情失败:" + ex.Message);
+            }
+        }
+
+
+
+        /// <summary>
+        /// 获取模板名称
+        /// </summary>
+        private async Task<string> GetTemplateName(Guid? templateId)
+        {
+            if (!templateId.HasValue)
+                return null;
+
+            try
+            {
+                var template = await _maintenanceTemplateRepository.FirstOrDefaultAsync(templateId.Value);
+                return template?.TemplateName;
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -1244,8 +1358,35 @@ namespace DeviceManagementSystem.DeviceInfos
                             // 申请相关信息
                             BusinessStatus = "草稿",
                             ChangeApplyId = item.Apply.Id,
-                            CreationTime = item.Apply.CreationTime,
-
+                            CreationTime = item.Apply.CreationTime,   // 保养计划
+                            MonthlyMaintenance = draftData?.MonthlyMaintenance != null
+                        ? new MaintenancePlanDto
+                        {
+                            TemplateId = draftData.MonthlyMaintenance.TemplateId,
+                            TemplateName = await GetTemplateName(draftData.MonthlyMaintenance.TemplateId)
+                        }
+                        : null,
+                            QuarterlyMaintenance = draftData?.QuarterlyMaintenance != null
+                        ? new MaintenancePlanDto
+                        {
+                            TemplateId = draftData.QuarterlyMaintenance.TemplateId,
+                            TemplateName = await GetTemplateName(draftData.QuarterlyMaintenance.TemplateId)
+                        }
+                        : null,
+                            HalfYearlyMaintenance = draftData?.HalfYearlyMaintenance != null
+                        ? new MaintenancePlanDto
+                        {
+                            TemplateId = draftData.HalfYearlyMaintenance.TemplateId,
+                            TemplateName = await GetTemplateName(draftData.HalfYearlyMaintenance.TemplateId)
+                        }
+                        : null,
+                            AnnualMaintenance = draftData?.AnnualMaintenance != null
+                        ? new MaintenancePlanDto
+                        {
+                            TemplateId = draftData.AnnualMaintenance.TemplateId,
+                            TemplateName = await GetTemplateName(draftData.AnnualMaintenance.TemplateId)
+                        }
+                        : null
                         };
 
                         var attachmentsResult = await _attachmentAppService.GetBusinessAttachmentsWithCategory(
@@ -1652,7 +1793,37 @@ namespace DeviceManagementSystem.DeviceInfos
                     FlowInstanceId = relation?.FlowInstanceId,
 
                     // 附件
-                    TechnicalAttachmentWithCategories = attachments
+                    TechnicalAttachmentWithCategories = attachments,
+
+                    // 保养计划
+                    MonthlyMaintenance = newData?.MonthlyMaintenance != null
+                ? new MaintenancePlanData
+                {
+                    TemplateId = newData.MonthlyMaintenance.TemplateId,
+                    TemplateName = await GetTemplateName(newData.MonthlyMaintenance.TemplateId)
+                }
+                : null,
+                    QuarterlyMaintenance = newData?.QuarterlyMaintenance != null
+                ? new MaintenancePlanData
+                {
+                    TemplateId = newData.QuarterlyMaintenance.TemplateId,
+                    TemplateName = await GetTemplateName(newData.QuarterlyMaintenance.TemplateId)
+                }
+                : null,
+                    HalfYearlyMaintenance = newData?.HalfYearlyMaintenance != null
+                ? new MaintenancePlanData
+                {
+                    TemplateId = newData.HalfYearlyMaintenance.TemplateId,
+                    TemplateName = await GetTemplateName(newData.HalfYearlyMaintenance.TemplateId)
+                }
+                : null,
+                    AnnualMaintenance = newData?.AnnualMaintenance != null
+                ? new MaintenancePlanData
+                {
+                    TemplateId = newData.AnnualMaintenance.TemplateId,
+                    TemplateName = await GetTemplateName(newData.AnnualMaintenance.TemplateId)
+                }
+                : null
                 };
 
                 return CommonResult<ChangeApplyDetailDto>.Success(result);
@@ -1953,6 +2124,9 @@ namespace DeviceManagementSystem.DeviceInfos
 
                 // 将附件从申请单转移到设备
                 await MoveAttachments(apply.Id, deviceId, "Device");
+
+                // 创建保养计划
+                await CreateMaintenancePlansForDevice(deviceId, newData);
             }
             else if (apply.ChangeType == "编辑")
             {
@@ -1969,13 +2143,302 @@ namespace DeviceManagementSystem.DeviceInfos
 
                 // 将附件从申请单转移到设备
                 await MoveAttachments(apply.Id, device.Id, "Device");
+
+
+                // 更新保养计划
+                await UpdateMaintenancePlansForDevice(device, newData);
             }
             else if (apply.ChangeType == "删除")
             {
                 // 软删除设备
                 await _deviceRepository.DeleteAsync(relation.DeviceId);
+
+
+                // 可以停用保养计划，但不删除
+                await DeactivateMaintenancePlansForDevice(relation.DeviceId);
             }
         }
+
+
+
+        /// <summary>
+        /// 为设备创建保养计划
+        /// </summary>
+        private async Task CreateMaintenancePlansForDevice(Guid deviceId, DeviceEditInput data)
+        {
+            try
+            {
+                var plans = new List<(string Level, MaintenancePlanInput PlanInput)>();
+
+                // 收集非空的计划
+                if (data.MonthlyMaintenance != null)
+                    plans.Add(("月度", new MaintenancePlanInput
+                    {
+                        TemplateId = data.MonthlyMaintenance.TemplateId,
+                        FirstMaintenanceDate = CalculateNextMaintenanceDate((DateTime)data.EnableDate, "月度"),
+                        EnableDate = data.EnableDate,
+                    }));
+
+                if (data.QuarterlyMaintenance != null)
+                    plans.Add(("季度", new MaintenancePlanInput
+                    {
+                        TemplateId = data.QuarterlyMaintenance.TemplateId,
+                        FirstMaintenanceDate = CalculateNextMaintenanceDate((DateTime)data.EnableDate, "季度"),
+                        EnableDate = data.EnableDate,
+                    }));
+
+                if (data.HalfYearlyMaintenance != null)
+                    plans.Add(("半年度", new MaintenancePlanInput
+                    {
+                        TemplateId = data.HalfYearlyMaintenance.TemplateId,
+                        FirstMaintenanceDate = CalculateNextMaintenanceDate((DateTime)data.EnableDate, "半年度"),
+                        EnableDate = data.EnableDate,
+                    }));
+
+                if (data.AnnualMaintenance != null)
+                    plans.Add(("年度", new MaintenancePlanInput
+                    {
+                        TemplateId = data.AnnualMaintenance.TemplateId,
+                        FirstMaintenanceDate = CalculateNextMaintenanceDate((DateTime)data.EnableDate, "年度"),
+                        EnableDate = data.EnableDate,
+                    }));
+
+                foreach (var (level, planInput) in plans)
+                {
+                    // 获取模板
+                    var template = await _maintenanceTemplateRepository.FirstOrDefaultAsync(planInput.TemplateId);
+                    if (template == null)
+                    {
+                        Logger.Warn($"模板不存在: {planInput.TemplateId}");
+                        continue;
+                    }
+
+                    // 计算下次保养日期
+                    DateTime nextDate = CalculateNextMaintenanceDate((DateTime)data.EnableDate, level);
+
+                    // 创建计划
+                    var plan = new MaintenancePlans
+                    {
+                        PlanName = $"{template.TemplateName} - {level}保养计划",
+                        DeviceId = deviceId,
+                        TemplateId = template.Id,
+                        MaintenanceLevel = level,
+                        CycleType = GetCycleType(level),
+                        CycleDays = GetCycleDays(level),
+                        FirstMaintenanceDate = planInput.FirstMaintenanceDate,
+                        NextMaintenanceDate = nextDate,
+                        Status = "启用",
+                        Remark = planInput.Remark
+                    };
+
+                    var planId = await _maintenancePlanRepository.InsertAndGetIdAsync(plan);
+
+                    // 创建关联关系
+                    var relation = new DeviceMaintenancePlanRelation
+                    {
+                        DeviceId = deviceId,
+                        MaintenancePlanId = planId,
+                        MaintenanceLevel = level,
+                        TemplateId = template.Id
+                    };
+                    await _deviceMaintenancePlanRelationRepository.InsertAsync(relation);
+                }
+
+                await CurrentUnitOfWork.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"创建保养计划失败: DeviceId={deviceId}", ex);
+                // 不抛出异常，避免影响设备创建
+            }
+        }
+
+        /// <summary>
+        /// 更新设备保养计划
+        /// </summary>
+        private async Task UpdateMaintenancePlansForDevice(Devices device, DeviceEditInput data)
+        {
+            try
+            {
+                // 获取设备现有计划
+                var existingRelations = await _deviceMaintenancePlanRelationRepository.GetAll()
+                    .Where(x => x.DeviceId == device.Id)
+                    .ToListAsync();
+
+                var existingPlanIds = existingRelations.Select(x => x.MaintenancePlanId).ToList();
+                var existingPlans = await _maintenancePlanRepository.GetAll()
+                    .Where(x => existingPlanIds.Contains(x.Id))
+                    .ToDictionaryAsync(x => x.MaintenanceLevel);
+
+                // 处理月度计划
+                await UpdateSinglePlan(device, existingPlans, "月度", data.MonthlyMaintenance);
+
+                // 处理季度计划
+                await UpdateSinglePlan(device, existingPlans, "季度", data.QuarterlyMaintenance);
+
+                // 处理半年度计划
+                await UpdateSinglePlan(device, existingPlans, "半年度", data.HalfYearlyMaintenance);
+
+                // 处理年度计划
+                await UpdateSinglePlan(device, existingPlans, "年度", data.AnnualMaintenance);
+
+                await CurrentUnitOfWork.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"更新保养计划失败: DeviceId={device.Id}", ex);
+                // 不抛出异常，避免影响设备更新
+            }
+        }
+
+
+        /// <summary>
+        /// 更新单个计划
+        /// </summary>
+        private async Task UpdateSinglePlan(Devices device, Dictionary<string, MaintenancePlans> existingPlans, string level, MaintenancePlanDto input)
+        {
+            // 如果输入为空或模板ID为空，且存在旧计划，则删除
+            if (input == null)
+            {
+                if (existingPlans.ContainsKey(level))
+                {
+                    var oldPlan = existingPlans[level];
+                    await _maintenancePlanRepository.DeleteAsync(oldPlan.Id);
+                    await _deviceMaintenancePlanRelationRepository.DeleteAsync(x => x.MaintenancePlanId == oldPlan.Id);
+                }
+                return;
+            }
+
+
+            int cycleDays = GetCycleDays(level);
+            // 计算首次保养日期
+            DateTime firstDate = CalculateNextMaintenanceDate((DateTime)device.EnableDate, level);
+            DateTime nextDate = firstDate;
+
+            // 如果存在旧计划，更新；否则创建新计划
+            if (existingPlans.ContainsKey(level))
+            {
+                var oldPlan = existingPlans[level];
+                oldPlan.TemplateId = input.TemplateId;
+                oldPlan.NextMaintenanceDate = CalculateNextMaintenanceDate(oldPlan.FirstMaintenanceDate, level);
+                await _maintenancePlanRepository.UpdateAsync(oldPlan);
+
+                // 更新关系
+                var relation = await _deviceMaintenancePlanRelationRepository.FirstOrDefaultAsync(x => x.MaintenancePlanId == oldPlan.Id);
+                if (relation != null)
+                {
+                    relation.TemplateId = input.TemplateId;
+                    await _deviceMaintenancePlanRelationRepository.UpdateAsync(relation);
+                }
+            }
+            else
+            {
+                // 创建新计划
+                var template = await _maintenanceTemplateRepository.GetAsync(input.TemplateId);
+                var plan = new MaintenancePlans
+                {
+                    PlanName = $"{template.TemplateName} - {level}保养计划",
+                    DeviceId = device.Id,
+                    TemplateId = template.Id,
+                    MaintenanceLevel = level,
+                    CycleType = GetCycleType(level),
+                    CycleDays = cycleDays,
+                    FirstMaintenanceDate = firstDate,
+                    NextMaintenanceDate = nextDate,
+                    Status = "启用",
+                };
+                var planId = await _maintenancePlanRepository.InsertAndGetIdAsync(plan);
+
+                var relation = new DeviceMaintenancePlanRelation
+                {
+                    DeviceId = device.Id,
+                    MaintenancePlanId = planId,
+                    MaintenanceLevel = level,
+                    TemplateId = template.Id
+                };
+                await _deviceMaintenancePlanRelationRepository.InsertAsync(relation);
+            }
+        }
+
+
+        /// <summary>
+        /// 停用设备保养计划
+        /// </summary>
+        private async Task DeactivateMaintenancePlansForDevice(Guid deviceId)
+        {
+            try
+            {
+                var relations = await _deviceMaintenancePlanRelationRepository.GetAll()
+                    .Where(x => x.DeviceId == deviceId)
+                    .Select(x => x.MaintenancePlanId)
+                    .ToListAsync();
+
+                foreach (var planId in relations)
+                {
+                    var plan = await _maintenancePlanRepository.FirstOrDefaultAsync(planId);
+                    if (plan != null)
+                    {
+                        plan.Status = "停用";
+                        await _maintenancePlanRepository.UpdateAsync(plan);
+                    }
+                }
+
+                await CurrentUnitOfWork.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"停用设备保养计划失败: DeviceId={deviceId}", ex);
+            }
+        }
+
+        /// <summary>
+        /// 计算下次保养日期
+        /// </summary>
+        private DateTime CalculateNextMaintenanceDate(DateTime lastDate, string level)
+        {
+            int days = GetCycleDays(level);
+            DateTime nextDate = lastDate.AddDays(days);
+
+            // 如果是周末，顺延到下一个工作日
+            while (nextDate.DayOfWeek == DayOfWeek.Saturday || nextDate.DayOfWeek == DayOfWeek.Sunday)
+            {
+                nextDate = nextDate.AddDays(1);
+            }
+
+            return nextDate;
+        }
+
+        /// <summary>
+        /// 获取周期类型
+        /// </summary>
+        private string GetCycleType(string level)
+        {
+            return level switch
+            {
+                "月度" => "按月",
+                "季度" => "按季",
+                "半年度" => "半年",
+                "年度" => "按年",
+                _ => "其他"
+            };
+        }
+
+
+        /// <summary>
+        /// 获取周期天数
+        /// </summary>
+        private int GetCycleDays(string level)
+        {
+            return level switch
+            {
+                "月度" => 30,
+                "季度" => 90,
+                "半年度" => 180,
+                "年度" => 365,
+                _ => 30
+            };
+        }
+
 
         /// <summary>
         /// 移动附件
@@ -2015,6 +2478,210 @@ namespace DeviceManagementSystem.DeviceInfos
         }
 
         #endregion
+
+
+
+        #region 保养相关
+
+        /// <summary>
+        /// 获取设备保养履历（已完成工单）
+        /// </summary>
+        [HttpGet]
+        [DisableAuditing]
+        public async Task<CommonResult<Page<MaintenanceTaskDto>>> GetMaintenanceHistory([FromQuery] MaintenanceHistoryQueryInput input)
+        {
+            try
+            {
+                if (input.Size > 100)
+                    input.Size = 100;
+
+                // 查询已完成工单
+                var query = from t in _maintenanceTaskRepository.GetAll().AsNoTracking()
+                            where t.DeviceId == input.DeviceId
+                                  && t.Status == "已完成"
+                            join d in _deviceRepository.GetAll().AsNoTracking() on t.DeviceId equals d.Id into deviceJoin
+                            from d in deviceJoin.DefaultIfEmpty()
+                            join tm in _maintenanceTemplateRepository.GetAll().AsNoTracking() on t.TemplateId equals tm.Id into templateJoin
+                            from tm in templateJoin.DefaultIfEmpty()
+                            select new { Task = t, Device = d, Template = tm };
+
+
+                // 应用筛选条件
+                if (input.StartDateBegin.HasValue)
+                {
+                    query = query.Where(x => x.Task.ActualEndTime >= input.StartDateBegin.Value);
+                }
+
+                if (input.StartDateEnd.HasValue)
+                {
+                    var endDate = input.StartDateEnd.Value.AddDays(1).AddSeconds(-1);
+                    query = query.Where(x => x.Task.ActualEndTime <= endDate);
+                }
+
+                if (!string.IsNullOrWhiteSpace(input.TaskNo))
+                {
+                    query = query.Where(x => x.Task.TaskNo.Contains(input.TaskNo));
+                }
+
+                var total = await query.CountAsync();
+
+                var items = await query
+                    .OrderByDescending(x => x.Task.ActualEndTime)
+                    .Skip((input.Current - 1) * input.Size)
+                    .Take(input.Size)
+                    .ToListAsync();
+
+                var result = new List<MaintenanceTaskDto>();
+
+                foreach (var item in items)
+                {
+                    // 获取工单项目
+                    var taskItems = await _maintenanceTaskItemsRepository.GetAll()
+                        .Where(x => x.TaskId == item.Task.Id)
+                        .OrderBy(x => x.SortOrder)
+                        .Select(x => new MaintenanceTaskItemDto
+                        {
+                            Id = x.Id,
+                            TaskId = x.TaskId,
+                            ItemId = x.ItemId,
+                            ItemName = x.ItemName,
+                            MaintenanceMethod = x.MaintenanceMethod,
+                            Content = x.Content,
+                            StandardValue = x.StandardValue,
+                            Result = x.Result,
+                            ActualValue = x.ActualValue,
+                            Remark = x.Remark,
+                            SortOrder = x.SortOrder
+                        })
+                        .ToListAsync();
+
+                    var dto = new MaintenanceTaskDto
+                    {
+                        Id = item.Task.Id,
+                        TaskNo = item.Task.TaskNo,
+                        TaskName = item.Task.TaskName,
+                        DeviceId = item.Task.DeviceId,
+                        DeviceCode = item.Device?.DeviceCode,
+                        DeviceName = item.Device?.DeviceName,
+                        TemplateId = item.Task.TemplateId,
+                        TemplateName = item.Template?.TemplateName,
+                        MaintenanceLevel = item.Task.MaintenanceLevel,
+                        MaintenanceLevelText = GetMaintenanceLevelText(item.Task.MaintenanceLevel),
+                        Status = item.Task.Status,
+                        PlanStartDate = item.Task.PlanStartDate,
+                        PlanEndDate = item.Task.PlanEndDate,
+                        ActualStartTime = item.Task.ActualStartTime,
+                        ActualEndTime = item.Task.ActualEndTime,
+                        Summary = item.Task.Summary,
+                        CompletionRemark = item.Task.CompletionRemark,
+                        Items = taskItems
+                    };
+
+                    // 解析执行人
+                    if (!string.IsNullOrEmpty(item.Task.ExecutorNames))
+                    {
+                        dto.ExecutorNames = item.Task.ExecutorNames.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+                    }
+
+                    result.Add(dto);
+                }
+
+                var page = new Page<MaintenanceTaskDto>(input.Current, input.Size, total)
+                {
+                    Records = result
+                };
+
+                return CommonResult<Page<MaintenanceTaskDto>>.Success(page);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("获取设备保养履历失败", ex);
+                return CommonResult<Page<MaintenanceTaskDto>>.Error($"获取设备保养履历失败: {ex.Message}");
+            }
+        }
+
+
+
+        /// <summary>
+        /// 获取设备绑定的保养模板列表
+        /// </summary>
+        [HttpGet]
+        [DisableAuditing]
+        public async Task<CommonResult<List<DeviceMaintenanceTemplateDto>>> GetDeviceMaintenanceTemplates(Guid deviceId)
+        {
+            try
+            {
+                // 获取设备关联的保养计划
+                var relations = await _deviceMaintenancePlanRelationRepository.GetAll()
+                    .Where(x => x.DeviceId == deviceId)
+                    .ToListAsync();
+
+                if (!relations.Any())
+                    return CommonResult<List<DeviceMaintenanceTemplateDto>>.Success(new List<DeviceMaintenanceTemplateDto>());
+
+                var templateIds = relations.Select(x => x.TemplateId).Distinct().ToList();
+                var templates = await _maintenanceTemplateRepository.GetAll()
+                    .Where(x => templateIds.Contains(x.Id))
+                    .ToDictionaryAsync(x => x.Id, x => x);
+
+                var result = new List<DeviceMaintenanceTemplateDto>();
+
+                foreach (var relation in relations)
+                {
+                    if (!templates.TryGetValue(relation.TemplateId, out var template))
+                        continue;
+
+                    result.Add(new DeviceMaintenanceTemplateDto
+                    {
+                        TemplateId = template.Id,
+                        TemplateName = template.TemplateName,
+                        MaintenanceLevel = relation.MaintenanceLevel,
+                        MaintenanceLevelText = GetMaintenanceLevelText(relation.MaintenanceLevel),
+                        PlanId = relation.MaintenancePlanId,
+                        PlanName = await GetMaintenancePlanName(relation.MaintenancePlanId)
+                    });
+                }
+
+                return CommonResult<List<DeviceMaintenanceTemplateDto>>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("获取设备保养模板列表失败", ex);
+                return CommonResult<List<DeviceMaintenanceTemplateDto>>.Error($"获取设备保养模板列表失败: {ex.Message}");
+            }
+        }
+
+
+
+        /// <summary>
+        /// 获取保养计划名称
+        /// </summary>
+        private async Task<string> GetMaintenancePlanName(Guid planId)
+        {
+            var plan = await _maintenancePlanRepository.FirstOrDefaultAsync(planId);
+            return plan?.PlanName;
+        }
+
+
+
+        /// <summary>
+        /// 获取保养等级显示文本
+        /// </summary>
+        private string GetMaintenanceLevelText(string level)
+        {
+            return level switch
+            {
+                "月度" => "月度保养",
+                "季度" => "季度保养",
+                "半年度" => "半年度保养",
+                "年度" => "年度保养",
+                _ => level
+            };
+        }
+
+        #endregion
+
+
 
         #region 辅助方法
 
@@ -2133,6 +2800,10 @@ namespace DeviceManagementSystem.DeviceInfos
             dto.MaintainUsers = await GetUsersByTypeAsync(device.Id, "维修人员");
             dto.MaintenanceUsers = await GetUsersByTypeAsync(device.Id, "保养人员");
 
+
+            // 获取保养计划
+            await LoadMaintenancePlansForDto(dto, device.Id);
+
             // 获取附件
             var attachmentsResult = await _attachmentAppService.GetBusinessAttachmentsWithCategory(
                 new GetBusinessAttachmentsInput
@@ -2162,6 +2833,74 @@ namespace DeviceManagementSystem.DeviceInfos
 
             return dto;
         }
+
+
+        /// <summary>
+        /// 为设备DTO加载保养计划
+        /// </summary>
+        private async Task LoadMaintenancePlansForDto(DeviceDto dto, Guid deviceId)
+        {
+            try
+            {
+                // 获取设备与保养计划的关系
+                var relations = await _deviceMaintenancePlanRelationRepository.GetAll()
+                    .Where(x => x.DeviceId == deviceId)
+                    .ToListAsync();
+
+                if (!relations.Any())
+                    return;
+
+                var planIds = relations.Select(x => x.MaintenancePlanId).ToList();
+                var plans = await _maintenancePlanRepository.GetAll()
+                    .Where(x => planIds.Contains(x.Id))
+                    .ToDictionaryAsync(x => x.Id);
+
+                var templateIds = relations.Select(x => x.TemplateId).Distinct().ToList();
+                var templates = await _maintenanceTemplateRepository.GetAll()
+                    .Where(x => templateIds.Contains(x.Id))
+                    .ToDictionaryAsync(x => x.Id, x => x.TemplateName);
+
+                foreach (var relation in relations)
+                {
+                    if (!plans.TryGetValue(relation.MaintenancePlanId, out var plan))
+                        continue;
+
+                    templates.TryGetValue(relation.TemplateId, out var templateName);
+
+                    var planDto = new MaintenancePlanDto
+                    {
+                        Id = plan.Id,
+                        TemplateId = relation.TemplateId,
+                        TemplateName = templateName,
+                        MaintenanceLevel = relation.MaintenanceLevel,
+                        Status = plan.Status,
+                        NextMaintenanceDate = plan.NextMaintenanceDate
+                    };
+
+                    switch (relation.MaintenanceLevel)
+                    {
+                        case "月度":
+                            dto.MonthlyMaintenance = planDto;
+                            break;
+                        case "季度":
+                            dto.QuarterlyMaintenance = planDto;
+                            break;
+                        case "半年度":
+                            dto.HalfYearlyMaintenance = planDto;
+                            break;
+                        case "年度":
+                            dto.AnnualMaintenance = planDto;
+                            break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"加载设备保养计划失败: DeviceId={deviceId}", ex);
+            }
+        }
+
+
 
         private async Task<DeviceFactoryNodeInfo> GetFactoryNodeAsync(Guid deviceId)
         {
@@ -2248,21 +2987,65 @@ namespace DeviceManagementSystem.DeviceInfos
                     FlowInstanceId = relation.FlowInstanceId
                 };
 
+                // 安全反序列化快照数据
                 if (!string.IsNullOrEmpty(apply.Snapshot))
                 {
-                    historyItem.Snapshot = DeviceJsonHelper.DeserializeDeviceEditInput(apply.Snapshot);
+                    try
+                    {
+                        historyItem.Snapshot = SafeDeserializeDeviceEditInput(apply.Snapshot);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warn($"解析设备快照数据失败: ApplyId={apply.Id}, Error={ex.Message}");
+                        // 设置为 null 或默认值，不影响整体功能
+                        historyItem.Snapshot = null;
+                    }
                 }
 
+                // 安全反序列化新数据 - 这里是报错的地方
                 if (!string.IsNullOrEmpty(apply.NewData))
                 {
-                    historyItem.NewData = DeviceJsonHelper.DeserializeDeviceEditInput(apply.NewData);
+                    try
+                    {
+                        historyItem.NewData = SafeDeserializeDeviceEditInput(apply.NewData);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warn($"解析设备新数据失败: ApplyId={apply.Id}, Error={ex.Message}");
+                        // 记录错误但继续处理，设置为 null 避免后续使用出错
+                        historyItem.NewData = null;
+
+                        // 记录具体的错误数据片段，便于排查
+                        var dataPreview = apply.NewData.Length > 100
+                            ? apply.NewData.Substring(0, 100) + "..."
+                            : apply.NewData;
+                        Logger.Warn($"问题数据片段: {dataPreview}");
+                    }
                 }
 
-                // 生成字段级变更对比
-                historyItem.ChangeDetails = GenerateChangeDetails(apply.Snapshot, apply.NewData);
+                // 即使反序列化失败，也尝试生成变更对比
+                try
+                {
+                    historyItem.ChangeDetails = SafeGenerateChangeDetails(apply.Snapshot, apply.NewData);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"生成变更对比失败: ApplyId={apply.Id}, Error={ex.Message}");
+                    historyItem.ChangeDetails = new List<FieldChangeItem>();
+                }
 
+                // 获取流程信息
                 if (relation.FlowInstanceId.HasValue)
-                    historyItem.FlowInfo = await GetFlowInfoAsync(relation.FlowInstanceId.Value);
+                {
+                    try
+                    {
+                        historyItem.FlowInfo = await GetFlowInfoAsync(relation.FlowInstanceId.Value);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warn($"获取流程信息失败: FlowInstanceId={relation.FlowInstanceId}, Error={ex.Message}");
+                    }
+                }
 
                 historyList.Add(historyItem);
             }
@@ -2270,105 +3053,752 @@ namespace DeviceManagementSystem.DeviceInfos
             return historyList;
         }
 
+
+        /// <summary>
+        /// 安全反序列化DeviceEditInput，处理各种异常情况
+        /// </summary>
+        private DeviceEditInput SafeDeserializeDeviceEditInput(string jsonStr)
+        {
+            if (string.IsNullOrWhiteSpace(jsonStr))
+                return null;
+
+            try
+            {
+                // 1. 尝试直接反序列化为对象
+                var result = JsonConvert.DeserializeObject<DeviceEditInput>(jsonStr);
+                if (result != null)
+                    return result;
+            }
+            catch (JsonException)
+            {
+                // 直接反序列化失败，尝试其他方法
+            }
+
+            try
+            {
+                // 2. 检查是否是最外层字符串（双重序列化）
+                // 比如可能是 '"{\"DeviceCode\":\"xxx\"}"' 这样的格式
+                if (jsonStr.TrimStart().StartsWith("\"") && jsonStr.TrimEnd().EndsWith("\""))
+                {
+                    var innerStr = JsonConvert.DeserializeObject<string>(jsonStr);
+                    if (!string.IsNullOrWhiteSpace(innerStr))
+                    {
+                        return JsonConvert.DeserializeObject<DeviceEditInput>(innerStr);
+                    }
+                }
+            }
+            catch
+            {
+                // 忽略，继续尝试其他方法
+            }
+
+            try
+            {
+                // 3. 尝试作为 JObject 解析，然后转换为目标类型
+                var jObject = JObject.Parse(jsonStr);
+                return jObject.ToObject<DeviceEditInput>();
+            }
+            catch
+            {
+                // 4. 如果以上都失败，检查是否是纯字符串格式的JSON对象
+                // 比如 "{'DeviceCode':'xxx'}" 这样的格式
+                try
+                {
+                    // 尝试修复常见的JSON格式问题
+                    var fixedJson = jsonStr
+                        .Replace("'", "\"") // 将单引号替换为双引号
+                        .Replace("None", "null") // 处理Python的None
+                        .Replace("True", "true") // 处理布尔值
+                        .Replace("False", "false");
+
+                    return JsonConvert.DeserializeObject<DeviceEditInput>(fixedJson);
+                }
+                catch
+                {
+                    // 所有尝试都失败，返回null并记录警告
+                    Logger.Warn($"所有反序列化尝试都失败，数据格式可能完全损坏: {jsonStr?.Substring(0, Math.Min(50, jsonStr?.Length ?? 0))}");
+                    return null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 安全生成变更对比
+        /// </summary>
+        private List<FieldChangeItem> SafeGenerateChangeDetails(string snapshotJson, string newDataJson)
+        {
+            var changes = new List<FieldChangeItem>();
+
+            JObject snapshot = null;
+            JObject newData = null;
+
+            // 安全解析快照数据
+            if (!string.IsNullOrEmpty(snapshotJson))
+            {
+                try
+                {
+                    snapshot = JObject.Parse(snapshotJson);
+                }
+                catch
+                {
+                    // 如果不是有效的 JSON 对象，尝试修复
+                    try
+                    {
+                        var fixedJson = FixJsonString(snapshotJson);
+                        snapshot = JObject.Parse(fixedJson);
+                    }
+                    catch
+                    {
+                        // 实在无法解析，设置为空对象
+                        snapshot = new JObject();
+                    }
+                }
+            }
+
+            // 安全解析新数据
+            if (!string.IsNullOrEmpty(newDataJson))
+            {
+                try
+                {
+                    newData = JObject.Parse(newDataJson);
+                }
+                catch
+                {
+                    // 如果不是有效的 JSON 对象，尝试修复
+                    try
+                    {
+                        var fixedJson = FixJsonString(newDataJson);
+                        newData = JObject.Parse(fixedJson);
+                    }
+                    catch
+                    {
+                        // 实在无法解析，设置为空对象
+                        newData = new JObject();
+                    }
+                }
+            }
+
+            // 如果 snapshot 和 newData 都为空，返回空列表
+            if ((snapshot == null || !snapshot.HasValues) && (newData == null || !newData.HasValues))
+                return changes;
+
+            // 新增操作，所有字段都是新增
+            if ((snapshot == null || !snapshot.HasValues) && newData != null && newData.HasValues)
+            {
+                foreach (var prop in newData.Properties())
+                {
+                    changes.Add(new FieldChangeItem
+                    {
+                        FieldName = prop.Name,
+                        FieldLabel = GetFieldLabel(prop.Name),
+                        OldValue = null,
+                        NewValue = prop.Value,
+                        ChangeType = "add"
+                    });
+                }
+                return changes;
+            }
+
+            // 删除操作
+            if (snapshot != null && snapshot.HasValues && (newData == null || !newData.HasValues))
+            {
+                foreach (var prop in snapshot.Properties())
+                {
+                    changes.Add(new FieldChangeItem
+                    {
+                        FieldName = prop.Name,
+                        FieldLabel = GetFieldLabel(prop.Name),
+                        OldValue = prop.Value,
+                        NewValue = null,
+                        ChangeType = "delete"
+                    });
+                }
+                return changes;
+            }
+
+            // 两者都有值，进行对比
+            if (snapshot != null && snapshot.HasValues && newData != null && newData.HasValues)
+            {
+                // 对比每个字段
+                var allFields = snapshot.Properties().Select(p => p.Name)
+                    .Union(newData.Properties().Select(p => p.Name))
+                    .Distinct();
+
+                foreach (var field in allFields)
+                {
+                    // 跳过复杂类型
+                    if (field == "technicalParameters" || field == "customerRequirements")
+                        continue;
+
+                    var oldValue = snapshot.ContainsKey(field) ? snapshot[field] : null;
+                    var newValue = newData.ContainsKey(field) ? newData[field] : null;
+
+                    if (oldValue == null && newValue != null)
+                    {
+                        changes.Add(new FieldChangeItem
+                        {
+                            FieldName = field,
+                            FieldLabel = GetFieldLabel(field),
+                            OldValue = null,
+                            NewValue = newValue,
+                            ChangeType = "add"
+                        });
+                    }
+                    else if (oldValue != null && newValue == null)
+                    {
+                        changes.Add(new FieldChangeItem
+                        {
+                            FieldName = field,
+                            FieldLabel = GetFieldLabel(field),
+                            OldValue = oldValue,
+                            NewValue = null,
+                            ChangeType = "delete"
+                        });
+                    }
+                    else if (oldValue != null && newValue != null && !JToken.DeepEquals(oldValue, newValue))
+                    {
+                        changes.Add(new FieldChangeItem
+                        {
+                            FieldName = field,
+                            FieldLabel = GetFieldLabel(field),
+                            OldValue = oldValue,
+                            NewValue = newValue,
+                            ChangeType = "edit"
+                        });
+                    }
+                }
+            }
+
+            return changes;
+        }
+
+        /// <summary>
+        /// 修复常见的JSON格式问题
+        /// </summary>
+        private string FixJsonString(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+                return json;
+
+            var fixedJson = json;
+
+            // 1. 如果是被引号包裹的JSON字符串，尝试提取内部内容
+            if (fixedJson.TrimStart().StartsWith("\"") && fixedJson.TrimEnd().EndsWith("\""))
+            {
+                try
+                {
+                    var inner = JsonConvert.DeserializeObject<string>(fixedJson);
+                    if (!string.IsNullOrEmpty(inner))
+                        fixedJson = inner;
+                }
+                catch
+                {
+                    // 忽略，继续使用原字符串
+                }
+            }
+
+            // 2. 修复单引号问题
+            fixedJson = fixedJson.Replace("'", "\"");
+
+            // 3. 修复Python风格的布尔值和null
+            fixedJson = fixedJson
+                .Replace(": None", ": null")
+                .Replace(":None", ":null")
+                .Replace(": True", ": true")
+                .Replace(":True", ":true")
+                .Replace(": False", ": false")
+                .Replace(":False", ":false");
+
+            // 4. 确保是有效的JSON对象
+            if (!fixedJson.TrimStart().StartsWith("{"))
+            {
+                // 如果不是以 { 开头，尝试包裹
+                if (fixedJson.TrimStart().StartsWith("\""))
+                {
+                    // 已经是字符串，可能包含了JSON
+                }
+                else
+                {
+                    // 尝试作为普通字符串处理
+                    fixedJson = "{\"value\":\"" + fixedJson.Replace("\"", "\\\"") + "\"}";
+                }
+            }
+
+            return fixedJson;
+        }
+
+
+
+        /// <summary>
+        /// 判断是否在基本字段对比中跳过
+        /// </summary>
+        private bool ShouldSkipFieldInBasicCompare(string fieldName)
+        {
+            var skipFields = new[] {
+        "technicalParameters",
+        "customerRequirements",
+        "technicalAttachmentWithCategories",
+        "monthlyMaintenance",
+        "quarterlyMaintenance",
+        "halfYearlyMaintenance",
+        "annualMaintenance"
+    };
+            return skipFields.Contains(fieldName);
+        }
+
+
+        /// <summary>
+        /// 格式化值用于显示
+        /// </summary>
+        private object FormatValueForDisplay(JToken value)
+        {
+            if (value == null || value.Type == JTokenType.Null)
+                return null;
+
+            switch (value.Type)
+            {
+                case JTokenType.Boolean:
+                    return value.Value<bool>() ? "是" : "否";
+                case JTokenType.Date:
+                    return value.Value<DateTime>().ToString("yyyy-MM-dd");
+                case JTokenType.String:
+                    return value.Value<string>();
+                case JTokenType.Integer:
+                case JTokenType.Float:
+                    return value.Value<object>();
+                case JTokenType.Array:
+                    return $"[{value.Count()}项]";
+                case JTokenType.Object:
+                    return "[对象]";
+                default:
+                    return value.ToString();
+            }
+        }
+
+
+        /// <summary>
+        /// 生成技术参数变更
+        /// </summary>
+        private List<FieldChangeItem> GenerateTechnicalParameterChanges(
+            List<TechnicalParameterItem> oldList,
+            List<TechnicalParameterItem> newList)
+        {
+            var changes = new List<FieldChangeItem>();
+
+            oldList = oldList ?? new List<TechnicalParameterItem>();
+            newList = newList ?? new List<TechnicalParameterItem>();
+
+            var oldDict = oldList.ToDictionary(x => x.ParameterName, x => x);
+            var newDict = newList.ToDictionary(x => x.ParameterName, x => x);
+
+            var allNames = oldDict.Keys.Union(newDict.Keys).Distinct().OrderBy(x => x);
+
+            foreach (var name in allNames)
+            {
+                oldDict.TryGetValue(name, out var oldItem);
+                newDict.TryGetValue(name, out var newItem);
+
+                if (oldItem == null && newItem != null)
+                {
+                    // 新增参数
+                    changes.Add(new FieldChangeItem
+                    {
+                        FieldName = $"technicalParameters.{name}",
+                        FieldLabel = $"技术参数-{name}",
+                        OldValue = null,
+                        NewValue = newItem.ParameterValue,
+                        ChangeType = "add"
+                    });
+                }
+                else if (oldItem != null && newItem == null)
+                {
+                    // 删除参数
+                    changes.Add(new FieldChangeItem
+                    {
+                        FieldName = $"technicalParameters.{name}",
+                        FieldLabel = $"技术参数-{name}",
+                        OldValue = oldItem.ParameterValue,
+                        NewValue = null,
+                        ChangeType = "delete"
+                    });
+                }
+                else if (oldItem != null && newItem != null && oldItem.ParameterValue != newItem.ParameterValue)
+                {
+                    // 修改参数值
+                    changes.Add(new FieldChangeItem
+                    {
+                        FieldName = $"technicalParameters.{name}",
+                        FieldLabel = $"技术参数-{name}",
+                        OldValue = oldItem.ParameterValue,
+                        NewValue = newItem.ParameterValue,
+                        ChangeType = "edit"
+                    });
+                }
+            }
+
+            return changes;
+        }
+
+
+
+        /// <summary>
+        /// 生成客户要求变更
+        /// </summary>
+        private List<FieldChangeItem> GenerateCustomerRequirementChanges(
+            List<CustomerRequirementItem> oldList,
+            List<CustomerRequirementItem> newList)
+        {
+            var changes = new List<FieldChangeItem>();
+
+            oldList = oldList ?? new List<CustomerRequirementItem>();
+            newList = newList ?? new List<CustomerRequirementItem>();
+
+            // 按客户名称分组
+            var oldGroups = oldList.GroupBy(x => x.CustomerName).ToDictionary(g => g.Key, g => g.ToList());
+            var newGroups = newList.GroupBy(x => x.CustomerName).ToDictionary(g => g.Key, g => g.ToList());
+
+            var allCustomers = oldGroups.Keys.Union(newGroups.Keys).Distinct().OrderBy(x => x);
+
+            foreach (var customer in allCustomers)
+            {
+                oldGroups.TryGetValue(customer, out var oldReqs);
+                newGroups.TryGetValue(customer, out var newReqs);
+
+                oldReqs = oldReqs ?? new List<CustomerRequirementItem>();
+                newReqs = newReqs ?? new List<CustomerRequirementItem>();
+
+                var oldReqDict = oldReqs.ToDictionary(x => x.RequirementName, x => x);
+                var newReqDict = newReqs.ToDictionary(x => x.RequirementName, x => x);
+
+                var allReqs = oldReqDict.Keys.Union(newReqDict.Keys).Distinct();
+
+                foreach (var reqName in allReqs)
+                {
+                    oldReqDict.TryGetValue(reqName, out var oldReq);
+                    newReqDict.TryGetValue(reqName, out var newReq);
+
+                    if (oldReq == null && newReq != null)
+                    {
+                        changes.Add(new FieldChangeItem
+                        {
+                            FieldName = $"customerRequirements.{customer}.{reqName}",
+                            FieldLabel = $"客户要求-{customer}-{reqName}",
+                            OldValue = null,
+                            NewValue = FormatRequirementValue(newReq),
+                            ChangeType = "add"
+                        });
+                    }
+                    else if (oldReq != null && newReq == null)
+                    {
+                        changes.Add(new FieldChangeItem
+                        {
+                            FieldName = $"customerRequirements.{customer}.{reqName}",
+                            FieldLabel = $"客户要求-{customer}-{reqName}",
+                            OldValue = FormatRequirementValue(oldReq),
+                            NewValue = null,
+                            ChangeType = "delete"
+                        });
+                    }
+                    else if (oldReq != null && newReq != null)
+                    {
+                        // 检查是否有变化
+                        if (oldReq.RequirementValue != newReq.RequirementValue ||
+                            oldReq.ActualValue != newReq.ActualValue ||
+                            oldReq.IsQualified != newReq.IsQualified)
+                        {
+                            changes.Add(new FieldChangeItem
+                            {
+                                FieldName = $"customerRequirements.{customer}.{reqName}",
+                                FieldLabel = $"客户要求-{customer}-{reqName}",
+                                OldValue = FormatRequirementValue(oldReq),
+                                NewValue = FormatRequirementValue(newReq),
+                                ChangeType = "edit"
+                            });
+                        }
+                    }
+                }
+            }
+
+            return changes;
+        }
+
+
+
+        /// <summary>
+        /// 格式化要求值
+        /// </summary>
+        private string FormatRequirementValue(CustomerRequirementItem req)
+        {
+            if (req == null) return null;
+            return $"要求值:{req.RequirementValue}, 实际值:{req.ActualValue}, 达标:{(req.IsQualified ? "是" : "否")}";
+        }
+
+
+        /// <summary>
+        /// 生成保养计划变更
+        /// </summary>
+        private List<FieldChangeItem> GenerateMaintenancePlanChanges(JObject snapshot, JObject newData)
+        {
+            var changes = new List<FieldChangeItem>();
+            var planTypes = new[] { "monthlyMaintenance", "quarterlyMaintenance", "halfYearlyMaintenance", "annualMaintenance" };
+            var planLabels = new Dictionary<string, string>
+    {
+        { "monthlyMaintenance", "月度保养" },
+        { "quarterlyMaintenance", "季度保养" },
+        { "halfYearlyMaintenance", "半年度保养" },
+        { "annualMaintenance", "年度保养" }
+    };
+
+            foreach (var planType in planTypes)
+            {
+                var oldPlan = snapshot?[planType];
+                var newPlan = newData?[planType];
+
+                string oldTemplateId = null;
+                string newTemplateId = null;
+
+                if (oldPlan != null && oldPlan.Type != JTokenType.Null)
+                {
+                    oldTemplateId = oldPlan["templateId"]?.Value<string>();
+                }
+
+                if (newPlan != null && newPlan.Type != JTokenType.Null)
+                {
+                    newTemplateId = newPlan["templateId"]?.Value<string>();
+                }
+
+                // 比较 templateId 是否有变化
+                if (string.IsNullOrEmpty(oldTemplateId) && !string.IsNullOrEmpty(newTemplateId))
+                {
+                    // 新增保养计划
+                    changes.Add(new FieldChangeItem
+                    {
+                        FieldName = planType,
+                        FieldLabel = planLabels[planType],
+                        OldValue = null,
+                        NewValue = $"已选择模板: {GetTemplateNameFromId(newTemplateId)}",
+                        ChangeType = "add"
+                    });
+                }
+                else if (!string.IsNullOrEmpty(oldTemplateId) && string.IsNullOrEmpty(newTemplateId))
+                {
+                    // 删除保养计划
+                    changes.Add(new FieldChangeItem
+                    {
+                        FieldName = planType,
+                        FieldLabel = planLabels[planType],
+                        OldValue = $"模板: {GetTemplateNameFromId(oldTemplateId)}",
+                        NewValue = null,
+                        ChangeType = "delete"
+                    });
+                }
+                else if (!string.IsNullOrEmpty(oldTemplateId) && !string.IsNullOrEmpty(newTemplateId) && oldTemplateId != newTemplateId)
+                {
+                    // 修改保养模板
+                    changes.Add(new FieldChangeItem
+                    {
+                        FieldName = planType,
+                        FieldLabel = planLabels[planType],
+                        OldValue = $"模板: {GetTemplateNameFromId(oldTemplateId)}",
+                        NewValue = $"模板: {GetTemplateNameFromId(newTemplateId)}",
+                        ChangeType = "edit"
+                    });
+                }
+            }
+
+            return changes;
+        }
+
+
+        /// <summary>
+        /// 根据ID获取模板名称（辅助方法）
+        /// </summary>
+        private async Task<string> GetTemplateNameFromId(string templateId)
+        {
+            var maintenanceTemplate = await _maintenanceTemplateRepository.FirstOrDefaultAsync(Guid.Parse(templateId));
+
+            return maintenanceTemplate?.TemplateName;
+        }
+
+
         /// <summary>
         /// 生成字段级变更对比
         /// </summary>
         private List<FieldChangeItem> GenerateChangeDetails(string snapshotJson, string newDataJson)
         {
             var changes = new List<FieldChangeItem>();
-            var newData = new JObject();
-            if (string.IsNullOrEmpty(snapshotJson))
+
+            // 处理新增操作
+            if (string.IsNullOrEmpty(snapshotJson) && !string.IsNullOrEmpty(newDataJson))
             {
-                // 新增操作，所有字段都是新增
-                if (!string.IsNullOrEmpty(newDataJson))
+                try
                 {
-                    newData = JObject.Parse(newDataJson);
+                    var newData = JObject.Parse(newDataJson);
                     foreach (var prop in newData.Properties())
                     {
+                        // 跳过复杂类型，它们会在后面单独处理
+                        if (ShouldSkipFieldInBasicCompare(prop.Name))
+                            continue;
+
                         changes.Add(new FieldChangeItem
                         {
                             FieldName = prop.Name,
                             FieldLabel = GetFieldLabel(prop.Name),
                             OldValue = null,
-                            NewValue = prop.Value,
+                            NewValue = FormatValueForDisplay(prop.Value),
                             ChangeType = "add"
                         });
                     }
+
+                    // 处理技术参数
+                    if (newData["technicalParameters"] != null)
+                    {
+                        var techParams = newData["technicalParameters"].ToObject<List<TechnicalParameterItem>>();
+                        changes.AddRange(GenerateTechnicalParameterChanges(null, techParams));
+                    }
+
+                    // 处理客户要求
+                    if (newData["customerRequirements"] != null)
+                    {
+                        var customerReqs = newData["customerRequirements"].ToObject<List<CustomerRequirementItem>>();
+                        changes.AddRange(GenerateCustomerRequirementChanges(null, customerReqs));
+                    }
+
+                    // 处理保养计划
+                    changes.AddRange(GenerateMaintenancePlanChanges(null, newData));
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"解析新增数据失败: {ex.Message}");
                 }
                 return changes;
             }
 
-            if (string.IsNullOrEmpty(newDataJson))
-                return changes;
-
-            var snapshot = JObject.Parse(snapshotJson);
-            newData = JObject.Parse(newDataJson);
-
-            // 对比每个字段
-            var allFields = snapshot.Properties().Select(p => p.Name)
-                .Union(newData.Properties().Select(p => p.Name))
-                .Distinct();
-
-            foreach (var field in allFields)
+            // 处理删除操作
+            if (!string.IsNullOrEmpty(snapshotJson) && string.IsNullOrEmpty(newDataJson))
             {
-                var oldValue = snapshot[field];
-                var newValue = newData[field];
+                try
+                {
+                    var snapshot = JObject.Parse(snapshotJson);
+                    foreach (var prop in snapshot.Properties())
+                    {
+                        if (ShouldSkipFieldInBasicCompare(prop.Name))
+                            continue;
 
-                // 跳过复杂类型（如 technicalParameters 会单独处理）
-                if (field == "technicalParameters" || field == "customerRequirements")
-                    continue;
+                        changes.Add(new FieldChangeItem
+                        {
+                            FieldName = prop.Name,
+                            FieldLabel = GetFieldLabel(prop.Name),
+                            OldValue = FormatValueForDisplay(prop.Value),
+                            NewValue = null,
+                            ChangeType = "delete"
+                        });
+                    }
 
-                if (oldValue == null && newValue != null)
-                {
-                    changes.Add(new FieldChangeItem
+                    // 处理技术参数
+                    if (snapshot["technicalParameters"] != null)
                     {
-                        FieldName = field,
-                        FieldLabel = GetFieldLabel(field),
-                        OldValue = null,
-                        NewValue = newValue,
-                        ChangeType = "add"
-                    });
-                }
-                else if (oldValue != null && newValue == null)
-                {
-                    changes.Add(new FieldChangeItem
+                        var techParams = snapshot["technicalParameters"].ToObject<List<TechnicalParameterItem>>();
+                        changes.AddRange(GenerateTechnicalParameterChanges(techParams, null));
+                    }
+
+                    // 处理客户要求
+                    if (snapshot["customerRequirements"] != null)
                     {
-                        FieldName = field,
-                        FieldLabel = GetFieldLabel(field),
-                        OldValue = oldValue,
-                        NewValue = null,
-                        ChangeType = "delete"
-                    });
+                        var customerReqs = snapshot["customerRequirements"].ToObject<List<CustomerRequirementItem>>();
+                        changes.AddRange(GenerateCustomerRequirementChanges(customerReqs, null));
+                    }
+
+                    // 处理保养计划
+                    changes.AddRange(GenerateMaintenancePlanChanges(snapshot, null));
                 }
-                else if (oldValue != null && newValue != null && !JToken.DeepEquals(oldValue, newValue))
+                catch (Exception ex)
                 {
-                    changes.Add(new FieldChangeItem
-                    {
-                        FieldName = field,
-                        FieldLabel = GetFieldLabel(field),
-                        OldValue = oldValue,
-                        NewValue = newValue,
-                        ChangeType = "edit"
-                    });
+                    Logger.Warn($"解析删除数据失败: {ex.Message}");
                 }
+                return changes;
             }
 
-            // 处理技术参数变更
-            var oldParams = snapshot["technicalParameters"]?.ToObject<List<TechnicalParameterItem>>() ?? new List<TechnicalParameterItem>();
-            var newParams = newData["technicalParameters"]?.ToObject<List<TechnicalParameterItem>>() ?? new List<TechnicalParameterItem>();
+            // 处理编辑操作（两者都有）
+            if (!string.IsNullOrEmpty(snapshotJson) && !string.IsNullOrEmpty(newDataJson))
+            {
+                try
+                {
+                    var snapshot = JObject.Parse(snapshotJson);
+                    var newData = JObject.Parse(newDataJson);
 
-            var paramChanges = CompareTechnicalParameters(oldParams, newParams);
-            changes.AddRange(paramChanges);
+                    // 对比基本字段
+                    var allFields = snapshot.Properties().Select(p => p.Name)
+                        .Union(newData.Properties().Select(p => p.Name))
+                        .Distinct();
 
-            // 处理客户要求变更
-            var oldReqs = snapshot["customerRequirements"]?.ToObject<List<CustomerRequirementItem>>() ?? new List<CustomerRequirementItem>();
-            var newReqs = newData["customerRequirements"]?.ToObject<List<CustomerRequirementItem>>() ?? new List<CustomerRequirementItem>();
+                    foreach (var field in allFields)
+                    {
+                        // 跳过复杂类型
+                        if (ShouldSkipFieldInBasicCompare(field))
+                            continue;
 
-            var reqChanges = CompareCustomerRequirements(oldReqs, newReqs);
-            changes.AddRange(reqChanges);
+                        var oldValue = snapshot.ContainsKey(field) ? snapshot[field] : null;
+                        var newValue = newData.ContainsKey(field) ? newData[field] : null;
+
+                        // 处理 null 值
+                        if (oldValue == null && newValue != null)
+                        {
+                            changes.Add(new FieldChangeItem
+                            {
+                                FieldName = field,
+                                FieldLabel = GetFieldLabel(field),
+                                OldValue = null,
+                                NewValue = FormatValueForDisplay(newValue),
+                                ChangeType = "add"
+                            });
+                        }
+                        else if (oldValue != null && newValue == null)
+                        {
+                            changes.Add(new FieldChangeItem
+                            {
+                                FieldName = field,
+                                FieldLabel = GetFieldLabel(field),
+                                OldValue = FormatValueForDisplay(oldValue),
+                                NewValue = null,
+                                ChangeType = "delete"
+                            });
+                        }
+                        else if (oldValue != null && newValue != null && !JToken.DeepEquals(oldValue, newValue))
+                        {
+                            changes.Add(new FieldChangeItem
+                            {
+                                FieldName = field,
+                                FieldLabel = GetFieldLabel(field),
+                                OldValue = FormatValueForDisplay(oldValue),
+                                NewValue = FormatValueForDisplay(newValue),
+                                ChangeType = "edit"
+                            });
+                        }
+                    }
+
+                    // 处理技术参数变更
+                    var oldParams = snapshot["technicalParameters"]?.ToObject<List<TechnicalParameterItem>>() ?? new List<TechnicalParameterItem>();
+                    var newParams = newData["technicalParameters"]?.ToObject<List<TechnicalParameterItem>>() ?? new List<TechnicalParameterItem>();
+                    changes.AddRange(GenerateTechnicalParameterChanges(oldParams, newParams));
+
+                    // 处理客户要求变更
+                    var oldReqs = snapshot["customerRequirements"]?.ToObject<List<CustomerRequirementItem>>() ?? new List<CustomerRequirementItem>();
+                    var newReqs = newData["customerRequirements"]?.ToObject<List<CustomerRequirementItem>>() ?? new List<CustomerRequirementItem>();
+                    changes.AddRange(GenerateCustomerRequirementChanges(oldReqs, newReqs));
+
+                    // 处理保养计划变更
+                    changes.AddRange(GenerateMaintenancePlanChanges(snapshot, newData));
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warn($"生成变更对比失败: {ex.Message}");
+                }
+            }
 
             return changes;
         }
+
 
         private string GetFieldLabel(string fieldName)
         {
@@ -2895,7 +4325,7 @@ namespace DeviceManagementSystem.DeviceInfos
         /// 节点Id
         /// </summary>
         public Guid NodeId { get; set; }
-        
+
         /// <summary>
         /// 节点名称
         /// </summary>

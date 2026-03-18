@@ -1,4 +1,5 @@
 ﻿using DeviceManagementSystem.Attachment.Dto;
+using DeviceManagementSystem.Maintenances.Dto;
 using DeviceManagementSystem.WorkFlows.FlowInstance.Dto;
 using System;
 using System.Collections.Generic;
@@ -202,7 +203,95 @@ namespace DeviceManagementSystem.DeviceInfos.Dto
         /// 是否可以发起删除申请
         /// </summary>
         public bool CanDelete { get; set; }
+
+
+
+        /// <summary>
+        /// 月度保养计划
+        /// </summary>
+        public MaintenancePlanDto MonthlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 季度保养计划
+        /// </summary>
+        public MaintenancePlanDto QuarterlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 半年度保养计划
+        /// </summary>
+        public MaintenancePlanDto HalfYearlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 年度保养计划
+        /// </summary>
+        public MaintenancePlanDto AnnualMaintenance { get; set; }
     }
+
+
+
+    /// <summary>
+    /// 设备简版DTO
+    /// </summary>
+    public class DeviceSimpleDto
+    {
+        /// <summary>
+        /// 主键
+        /// </summary>
+        public Guid Id { get; set; }
+        
+        /// <summary>
+        /// 设备编码
+        /// </summary>
+        public string DeviceCode { get; set; }
+        
+        /// <summary>
+        /// 设备名称
+        /// </summary>
+        public string DeviceName { get; set; }
+        
+        /// <summary>
+        /// 设备状态
+        /// </summary>
+        public string DeviceStatus { get; set; }
+
+    }
+
+
+    ///// <summary>
+    ///// 保养计划DTO
+    ///// </summary>
+    //public class MaintenancePlanDto
+    //{
+    //    /// <summary>
+    //    /// 计划ID
+    //    /// </summary>
+    //    public Guid? PlanId { get; set; }
+
+    //    /// <summary>
+    //    /// 模板ID
+    //    /// </summary>
+    //    public Guid? TemplateId { get; set; }
+
+    //    /// <summary>
+    //    /// 模板名称
+    //    /// </summary>
+    //    public string TemplateName { get; set; }
+
+    //    /// <summary>
+    //    /// 保养等级
+    //    /// </summary>
+    //    public string MaintenanceLevel { get; set; }
+
+    //    /// <summary>
+    //    /// 计划状态
+    //    /// </summary>
+    //    public string Status { get; set; }
+
+    //    /// <summary>
+    //    /// 下次保养日期
+    //    /// </summary>
+    //    public DateTime? NextMaintenanceDate { get; set; }
+    //}
 
 
     /// <summary>
@@ -707,8 +796,78 @@ namespace DeviceManagementSystem.DeviceInfos.Dto
         /// 技术资料附件ID列表（按分类）
         /// </summary>
         public List<AttachmentWithCategory> TechnicalAttachmentWithCategories { get; set; }
+
+
+
+        /// <summary>
+        /// 月度保养计划数据
+        /// </summary>
+        public MaintenancePlanDto MonthlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 季度保养计划数据
+        /// </summary>
+        public MaintenancePlanDto QuarterlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 半年度保养计划数据
+        /// </summary>
+        public MaintenancePlanDto HalfYearlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 年度保养计划数据
+        /// </summary>
+        public MaintenancePlanDto AnnualMaintenance { get; set; }
     }
 
+
+    /// <summary>
+    /// 保养计划数据
+    /// </summary>
+    public class MaintenancePlanData
+    {
+        /// <summary>
+        /// 模板id
+        /// </summary>
+        public Guid TemplateId { get; set; }
+        
+        /// <summary>
+        /// 模板名称
+        /// </summary>
+        public string TemplateName { get; set; }
+        
+        /// <summary>
+        /// 保养项目列表
+        /// </summary>
+        public List<MaintenancePlanItemData> Items { get; set; }
+    }
+
+
+    /// <summary>
+    /// 保养计划项目数据
+    /// </summary>
+    public class MaintenancePlanItemData
+    {
+        /// <summary>
+        /// 序号
+        /// </summary>
+        public string PointNo { get; set; }
+
+        /// <summary>
+        /// 点检项目名称
+        /// </summary>
+        public string PointName { get; set; }
+
+        /// <summary>
+        /// 点检内容
+        /// </summary>
+        public string InspectionContent { get; set; }
+
+        /// <summary>
+        /// 点检方法列表
+        /// </summary>
+        public List<string> InspectionMethod { get; set; }
+    }
 
 
     /// <summary>
@@ -1008,6 +1167,29 @@ namespace DeviceManagementSystem.DeviceInfos.Dto
         /// 可用操作列表（如：提交、撤销、编辑等）
         /// </summary>
         public List<string> AvailableActions { get; set; }
+
+
+        /// <summary>
+        /// 月度保养计划
+        /// </summary>
+        public MaintenancePlanData MonthlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 季度保养计划
+        /// </summary>
+        public MaintenancePlanData QuarterlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 半年度保养计划
+        /// </summary>
+        public MaintenancePlanData HalfYearlyMaintenance { get; set; }
+
+        /// <summary>
+        /// 年度保养计划
+        /// </summary>
+        public MaintenancePlanData AnnualMaintenance { get; set; }
+
+
     }
 
     /// <summary>

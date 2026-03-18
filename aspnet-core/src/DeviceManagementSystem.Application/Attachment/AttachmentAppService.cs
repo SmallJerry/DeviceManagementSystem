@@ -661,6 +661,7 @@ namespace DeviceManagementSystem.Attachment
         {
             try
             {
+                // 参数验证
                 if (input.BusinessId == Guid.Empty)
                 {
                     return CommonResult.Error("业务ID不能为空");
@@ -671,26 +672,32 @@ namespace DeviceManagementSystem.Attachment
                     return CommonResult.Error("业务类型不能为空");
                 }
 
-                // 获取当前已绑定的附件ID（含分类信息）
+
+                // 统一获取需要处理的附件列表
+                var attachmentsToProcess = input.GetAttachmentsToProcess();
+
+                // 获取当前已绑定的附件关系
                 var existingRelations = await _relationRepository.GetAll()
                     .Where(x => x.BusinessId == input.BusinessId &&
                                x.BusinessType == input.BusinessType)
                     .ToListAsync();
 
-                var existingAttachmentIds = existingRelations.Select(x => x.AttachmentId).ToList();
-
-                // 处理传入的附件（带分类）
-                var inputAttachments = input.AttachmentWithCategories ?? new List<AttachmentWithCategory>();
+                // 创建字典以便快速查找
+                var existingRelationsDict = existingRelations.ToDictionary(x => x.AttachmentId);
 
                 // 需要新增的附件关系
                 var relationsToAdd = new List<BusinessAttachmentRelations>();
 
-                foreach (var item in inputAttachments)
-                {
-                    // 检查是否已存在相同附件ID的关系
-                    var existing = existingRelations.FirstOrDefault(x => x.AttachmentId == item.AttachmentId);
+                // 需要保留的附件ID集合（用于确定需要删除的附件）
+                var attachmentIdsToKeep = new HashSet<Guid>();
 
-                    if (existing != null)
+                // 处理传入的附件
+                foreach (var item in attachmentsToProcess)
+                {
+                    attachmentIdsToKeep.Add(item.AttachmentId);
+
+                    // 检查是否已存在相同附件ID的关系
+                    if (existingRelationsDict.TryGetValue(item.AttachmentId, out var existing))
                     {
                         // 如果存在但分类不同，更新分类
                         if (existing.Category != item.Category)
@@ -698,8 +705,6 @@ namespace DeviceManagementSystem.Attachment
                             existing.Category = item.Category;
                             await _relationRepository.UpdateAsync(existing);
                         }
-                        // 从待删除列表中移除
-                        existingAttachmentIds.Remove(item.AttachmentId);
                     }
                     else
                     {
@@ -715,9 +720,9 @@ namespace DeviceManagementSystem.Attachment
                     }
                 }
 
-                // 需要删除的附件关系（传入的ID中没有的）
+                // 需要删除的附件关系（已存在但不在传入列表中的）
                 var relationsToRemove = existingRelations
-                    .Where(x => existingAttachmentIds.Contains(x.AttachmentId))
+                    .Where(x => !attachmentIdsToKeep.Contains(x.AttachmentId))
                     .ToList();
 
                 // 批量新增

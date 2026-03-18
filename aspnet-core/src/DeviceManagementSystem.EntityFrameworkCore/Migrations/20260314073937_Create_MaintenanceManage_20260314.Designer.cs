@@ -4,6 +4,7 @@ using DeviceManagementSystem.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DeviceManagementSystem.Migrations
 {
     [DbContext(typeof(DeviceManagementSystemDbContext))]
-    partial class DeviceManagementSystemDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260314073937_Create_MaintenanceManage_20260314")]
+    partial class Create_MaintenanceManage_20260314
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2182,6 +2185,27 @@ namespace DeviceManagementSystem.Migrations
                     b.ToTable("DeviceFactoryNodeRelation");
                 });
 
+            modelBuilder.Entity("DeviceManagementSystem.DeviceInfos.DeviceMaintenancePlanRelations", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CycleType")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("MaintenancePlanId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("DeviceMaintenancePlanRelation");
+                });
+
             modelBuilder.Entity("DeviceManagementSystem.DeviceInfos.DeviceSupplierRelations", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2649,7 +2673,7 @@ namespace DeviceManagementSystem.Migrations
                     b.ToTable("FlowDefinition");
                 });
 
-            modelBuilder.Entity("DeviceManagementSystem.Maintenances.DeviceMaintenancePlanRelation", b =>
+            modelBuilder.Entity("DeviceManagementSystem.Maintenances.DeviceMaintenanceTemplateRelation", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -2658,40 +2682,10 @@ namespace DeviceManagementSystem.Migrations
                     b.Property<Guid>("DeviceId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("MaintenanceLevel")
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<Guid>("MaintenancePlanId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("TemplateId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("DeviceMaintenancePlanRelation");
-                });
-
-            modelBuilder.Entity("DeviceManagementSystem.Maintenances.DeviceMaintenanceTemplateRelation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("ChangeApplyId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("DeviceId")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<DateTime>("FirstMaintenanceDate")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("MaintenanceLevel")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Remark")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<Guid>("TemplateId")
@@ -2702,59 +2696,16 @@ namespace DeviceManagementSystem.Migrations
                     b.ToTable("DeviceMaintenanceTemplateRelation");
                 });
 
-            modelBuilder.Entity("DeviceManagementSystem.Maintenances.MaintenanceItemGroups", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime>("CreationTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("CreatorUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("DeleterUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletionTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("GroupName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTime?>("LastModificationTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("LastModifierUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("PointType")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<int?>("SortOrder")
-                        .HasColumnType("int");
-
-                    b.Property<Guid>("TemplateId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("MaintenanceItemGroup");
-                });
-
             modelBuilder.Entity("DeviceManagementSystem.Maintenances.MaintenanceItems", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<string>("Content")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
                     b.Property<DateTime>("CreationTime")
                         .HasColumnType("datetime2");
 
@@ -2767,25 +2718,18 @@ namespace DeviceManagementSystem.Migrations
                     b.Property<DateTime?>("DeletionTime")
                         .HasColumnType("datetime2");
 
-                    b.Property<Guid?>("GroupId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int?>("GroupSortOrder")
+                    b.Property<int?>("EstimatedMinutes")
                         .HasColumnType("int");
-
-                    b.Property<string>("InspectionContent")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("InspectionMethod")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
-                    b.Property<int?>("ItemSortOrder")
-                        .HasColumnType("int");
+                    b.Property<bool?>("IsRequired")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("ItemName")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<DateTime?>("LastModificationTime")
                         .HasColumnType("datetime2");
@@ -2793,14 +2737,28 @@ namespace DeviceManagementSystem.Migrations
                     b.Property<long?>("LastModifierUserId")
                         .HasColumnType("bigint");
 
-                    b.Property<string>("PointName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
+                    b.Property<string>("MaintenanceMethod")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
-                    b.Property<string>("PointNo")
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)");
+                    b.Property<string>("RequiredSpareParts")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("RequiredTools")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("SafetyNotes")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("int");
+
+                    b.Property<string>("StandardValue")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
                     b.Property<Guid>("TemplateId")
                         .HasColumnType("uniqueidentifier");
@@ -2883,57 +2841,25 @@ namespace DeviceManagementSystem.Migrations
                     b.ToTable("MaintenancePlan");
                 });
 
-            modelBuilder.Entity("DeviceManagementSystem.Maintenances.MaintenanceStandards", b =>
+            modelBuilder.Entity("DeviceManagementSystem.Maintenances.MaintenanceTaskAttachmentRelation", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<DateTime>("CreationTime")
-                        .HasColumnType("datetime2");
+                    b.Property<Guid>("AttachmentId")
+                        .HasColumnType("uniqueidentifier");
 
-                    b.Property<long?>("CreatorUserId")
-                        .HasColumnType("bigint");
+                    b.Property<string>("AttachmentType")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
 
-                    b.Property<long?>("DeleterUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletionTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("InspectionContent")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("InspectionMethodJson")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTime?>("LastModificationTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("LastModifierUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("PointName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("PointType")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<string>("Remark")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
-                    b.ToTable("MaintenanceStandard");
+                    b.ToTable("MaintenanceTaskAttachmentRelation");
                 });
 
             modelBuilder.Entity("DeviceManagementSystem.Maintenances.MaintenanceTaskExecutorRelation", b =>

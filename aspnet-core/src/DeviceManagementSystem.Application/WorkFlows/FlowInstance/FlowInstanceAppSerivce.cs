@@ -7,6 +7,8 @@ using DeviceManagementSystem.DeviceInfos;
 using DeviceManagementSystem.DeviceInfos.Dto;
 using DeviceManagementSystem.DeviceInfos.Utils;
 using DeviceManagementSystem.FlowManagement;
+using DeviceManagementSystem.Maintenances;
+using DeviceManagementSystem.Maintenances.Dto;
 using DeviceManagementSystem.Users;
 using DeviceManagementSystem.Utils.Common;
 using DeviceManagementSystem.WorkFlows.FlowDefinition.Dto;
@@ -36,6 +38,11 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
         private readonly IRepository<Devices, Guid> _deviceRepository;
         private readonly IRepository<DeviceChangeApplications, Guid> _changeApplyRepository;
         private readonly IRepository<DeviceAndChangeApplicationRelations, Guid> _deviceChangeRelationRepository;
+
+        // 新增保养计划相关仓储
+        private readonly IRepository<MaintenancePlans, Guid> _maintenancePlanRepository;
+        private readonly IRepository<DeviceMaintenancePlanRelation, Guid> _deviceMaintenancePlanRelationRepository;
+        private readonly IRepository<MaintenanceTemplates, Guid> _maintenanceTemplateRepository;
 
         // 操作指令常量
         private const int CMD_START = 0;
@@ -72,20 +79,9 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
         private const int MULTI_INSTANCE_OR_SIGN = 2;     // 或签：一人同意即可
         private const int MULTI_INSTANCE_SEQUENTIAL = 3;  // 依次审批：按顺序审批
 
-
-
         /// <summary>
         /// 构造函数
         /// </summary>
-        /// <param name="flowDefRepository"></param>
-        /// <param name="flowInstanceRepository"></param>
-        /// <param name="historyRepository"></param>
-        /// <param name="taskRepository"></param>
-        /// <param name="userAppService"></param>
-        /// <param name="changeApplyRepository"></param>
-        /// <param name="formRepository"></param>
-        /// <param name="deviceChangeRelationRepository"></param>
-        /// <param name="deviceRepository"></param>
         public FlowInstanceAppService(
             IRepository<FlowDefinitions, Guid> flowDefRepository,
             IRepository<FlowInstances, Guid> flowInstanceRepository,
@@ -95,7 +91,10 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
             IRepository<DeviceChangeApplications, Guid> changeApplyRepository,
             IRepository<BusinessForms, Guid> formRepository,
             IRepository<DeviceAndChangeApplicationRelations, Guid> deviceChangeRelationRepository,
-            IRepository<Devices, Guid> deviceRepository)
+            IRepository<Devices, Guid> deviceRepository,
+            IRepository<MaintenancePlans, Guid> maintenancePlanRepository,
+            IRepository<DeviceMaintenancePlanRelation, Guid> deviceMaintenancePlanRelationRepository,
+            IRepository<MaintenanceTemplates, Guid> maintenanceTemplateRepository)
         {
             _flowDefRepository = flowDefRepository;
             _flowInstanceRepository = flowInstanceRepository;
@@ -106,6 +105,9 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
             _formRepository = formRepository;
             _deviceChangeRelationRepository = deviceChangeRelationRepository;
             _deviceRepository = deviceRepository;
+            _maintenancePlanRepository = maintenancePlanRepository;
+            _deviceMaintenancePlanRelationRepository = deviceMaintenancePlanRelationRepository;
+            _maintenanceTemplateRepository = maintenanceTemplateRepository;
         }
 
         #region 流程启动
@@ -1071,12 +1073,8 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                 {
                     Logger.Info($"流程完成回调: FlowInstanceId={flowInstanceId}, Status={status}, BusinessId={instance.BusinessId}");
 
-                    var deviceAppService = IocManager.Instance.Resolve<DeviceAppService>();
-                    await deviceAppService.OnProcessCompleted(new ProcessCompletedInput
-                    {
-                        FlowInstanceId = flowInstanceId,
-                        ProcessStatus = status
-                    });
+                    // 直接通过仓储调用设备服务的方法
+                    await OnDeviceProcessCompleted(instance.BusinessId, status);
 
                     var apply = await _changeApplyRepository.FirstOrDefaultAsync(instance.BusinessId);
                     if (apply != null)
@@ -1098,6 +1096,365 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                     Logger.Error($"调用设备流程回调失败: {ex.Message}");
                 }
             }
+        }
+
+        /// <summary>
+        /// 处理设备流程完成
+        /// </summary>
+        /// <param name="applyId">申请ID</param>
+        /// <param name="status">流程状态</param>
+        private async Task OnDeviceProcessCompleted(Guid applyId, int status)
+        {
+            try
+            {
+                var apply = await _changeApplyRepository.FirstOrDefaultAsync(applyId);
+                if (apply == null) return;
+
+                var relation = await _deviceChangeRelationRepository
+                    .FirstOrDefaultAsync(x => x.DeviceChangeApplicationId == applyId);
+
+                if (relation == null) return;
+
+                // 根据流程状态处理
+                if (status == STATUS_APPROVED) // 通过
+                {
+                    var newData = DeviceJsonHelper.DeserializeDeviceEditInput(apply.NewData);
+
+                    if (apply.ChangeType == "新增")
+                    {
+                        // 创建设备
+                        var device = new Devices();
+                        UpdateDeviceEntity(device, newData);
+                        device.Creator = apply.SubmitterName;
+
+                        var deviceId = await _deviceRepository.InsertAndGetIdAsync(device);
+
+                        // 更新关系中的设备ID
+                        relation.DeviceId = deviceId;
+                        await _deviceChangeRelationRepository.UpdateAsync(relation);
+
+                        // 创建保养计划
+                        await CreateMaintenancePlansForDevice(deviceId, newData);
+                    }
+                    else if (apply.ChangeType == "编辑")
+                    {
+                        var device = await _deviceRepository.FirstOrDefaultAsync(relation.DeviceId);
+                        if (device != null)
+                        {
+                            UpdateDeviceEntity(device, newData);
+                            await _deviceRepository.UpdateAsync(device);
+
+                            // 检查设备是否已有保养计划
+                            var hasExistingPlans = await _maintenancePlanRepository.GetAll()
+                                .AnyAsync(p => p.DeviceId == device.Id);
+
+                            if (hasExistingPlans)
+                            {
+                                // 已有保养计划：更新现有计划
+                                await UpdateMaintenancePlansForDevice(device, newData);
+                            }
+                            else
+                            {
+                                // 没有保养计划：创建新计划
+                                await CreateMaintenancePlansForDevice(device.Id, newData);
+                            }
+                        }
+                    }
+                    else if (apply.ChangeType == "删除")
+                    {
+                        // 软删除设备
+                        await _deviceRepository.DeleteAsync(relation.DeviceId);
+
+                        // 停用保养计划
+                        await DeactivateMaintenancePlansForDevice(relation.DeviceId);
+                    }
+                }
+                else if (status == STATUS_REJECTED || status == STATUS_CANCELLED)
+                {
+                    // 拒绝或撤销，无需处理
+                    Logger.Info($"设备申请被拒绝或撤销: ApplyId={applyId}, Status={status}");
+                }
+
+                await CurrentUnitOfWork.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"处理设备流程完成失败: {ex.Message}", ex);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// 更新设备实体
+        /// </summary>
+        private void UpdateDeviceEntity(Devices device, DeviceEditInput input)
+        {
+            device.DeviceCode = input.DeviceCode;
+            device.DeviceName = input.DeviceName;
+            device.Specification = input.Specification;
+            device.DeviceLevel = input.DeviceLevel;
+            device.IsKeyDevice = input.IsKeyDevice;
+            device.TechnicalParameters = JsonConvert.SerializeObject(input.TechnicalParameters ?? new List<TechnicalParameterItem>());
+            device.CustomerRequirements = JsonConvert.SerializeObject(input.CustomerRequirements ?? new List<CustomerRequirementItem>());
+            device.LogisticsNo = input.LogisticsNo;
+            device.FactoryNo = input.FactoryNo;
+            device.Manufacturer = input.Manufacturer;
+            device.ManufactureDate = input.ManufactureDate;
+            device.PurchaseNo = input.PurchaseNo;
+            device.SourceType = input.SourceType;
+            device.Location = input.Location;
+            device.DeviceStatus = input.DeviceStatus;
+            device.EnableDate = input.EnableDate;
+        }
+
+        /// <summary>
+        /// 为设备创建保养计划
+        /// </summary>
+        private async Task CreateMaintenancePlansForDevice(Guid deviceId, DeviceEditInput data)
+        {
+            try
+            {
+                var plans = new List<(string Level, MaintenancePlanDto PlanData)>();
+
+                // 收集非空的计划
+                if (data.MonthlyMaintenance != null)
+                    plans.Add(("月度", data.MonthlyMaintenance));
+
+                if (data.QuarterlyMaintenance != null)
+                    plans.Add(("季度", data.QuarterlyMaintenance));
+
+                if (data.HalfYearlyMaintenance != null)
+                    plans.Add(("半年度", data.HalfYearlyMaintenance));
+
+                if (data.AnnualMaintenance != null)
+                    plans.Add(("年度", data.AnnualMaintenance));
+
+                foreach (var (level, planData) in plans)
+                {
+                    // 获取模板
+                    var template = await _maintenanceTemplateRepository.FirstOrDefaultAsync(planData.TemplateId);
+                    if (template == null)
+                    {
+                        Logger.Warn($"模板不存在: {planData.TemplateId}");
+                        continue;
+                    }
+
+                    // 计算首次保养日期 = 启用日期 + 周期天数
+                    DateTime firstDate = CalculateNextMaintenanceDate((DateTime)data.EnableDate,level);
+                    DateTime nextDate = firstDate;
+
+                    // 创建计划
+                    var plan = new MaintenancePlans
+                    {
+                        PlanName = $"{template.TemplateName} - {level}保养计划",
+                        DeviceId = deviceId,
+                        TemplateId = template.Id,
+                        MaintenanceLevel = level,
+                        CycleType = GetCycleType(level),
+                        CycleDays = GetCycleDays(level),
+                        FirstMaintenanceDate = firstDate,
+                        NextMaintenanceDate = nextDate,
+                        Status = "启用",
+                    };
+
+                    var planId = await _maintenancePlanRepository.InsertAndGetIdAsync(plan);
+
+                    // 创建关联关系
+                    var relation = new DeviceMaintenancePlanRelation
+                    {
+                        DeviceId = deviceId,
+                        MaintenancePlanId = planId,
+                        MaintenanceLevel = level,
+                        TemplateId = template.Id
+                    };
+                    await _deviceMaintenancePlanRelationRepository.InsertAsync(relation);
+                }
+
+                await CurrentUnitOfWork.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"创建保养计划失败: DeviceId={deviceId}", ex);
+                // 不抛出异常，避免影响设备创建
+            }
+        }
+
+        /// <summary>
+        /// 更新设备保养计划
+        /// </summary>
+        private async Task UpdateMaintenancePlansForDevice(Devices device, DeviceEditInput data)
+        {
+            try
+            {
+                // 获取设备现有计划
+                var existingRelations = await _deviceMaintenancePlanRelationRepository.GetAll()
+                    .Where(x => x.DeviceId == device.Id)
+                    .ToListAsync();
+
+                var existingPlanIds = existingRelations.Select(x => x.MaintenancePlanId).ToList();
+                var existingPlans = await _maintenancePlanRepository.GetAll()
+                    .Where(x => existingPlanIds.Contains(x.Id))
+                    .ToDictionaryAsync(x => x.MaintenanceLevel);
+
+                // 处理各个周期的计划
+                await UpdateSinglePlan(device, existingPlans, "月度", data.MonthlyMaintenance);
+                await UpdateSinglePlan(device, existingPlans, "季度", data.QuarterlyMaintenance);
+                await UpdateSinglePlan(device, existingPlans, "半年度", data.HalfYearlyMaintenance);
+                await UpdateSinglePlan(device, existingPlans, "年度", data.AnnualMaintenance);
+
+                await CurrentUnitOfWork.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"更新保养计划失败: DeviceId={device.Id}", ex);
+                // 不抛出异常，避免影响设备更新
+            }
+        }
+
+        /// <summary>
+        /// 更新单个计划
+        /// </summary>
+        private async Task UpdateSinglePlan(Devices device, Dictionary<string, MaintenancePlans> existingPlans, string level, MaintenancePlanDto input)
+        {
+            // 如果输入为空或模板ID为空，且存在旧计划，则删除
+            if (input == null)
+            {
+                if (existingPlans.ContainsKey(level))
+                {
+                    var oldPlan = existingPlans[level];
+                    await _maintenancePlanRepository.DeleteAsync(oldPlan.Id);
+                    await _deviceMaintenancePlanRelationRepository.DeleteAsync(x => x.MaintenancePlanId == oldPlan.Id);
+                }
+                return;
+            }
+
+           
+            int cycleDays = GetCycleDays(level);
+            // 计算首次保养日期
+            DateTime firstDate = CalculateNextMaintenanceDate((DateTime)device.EnableDate,level);
+            DateTime nextDate = firstDate;
+
+            // 如果存在旧计划，更新；否则创建新计划
+            if (existingPlans.ContainsKey(level))
+            {
+                var oldPlan = existingPlans[level];
+                oldPlan.TemplateId = input.TemplateId;
+                oldPlan.NextMaintenanceDate = firstDate;
+                await _maintenancePlanRepository.UpdateAsync(oldPlan);
+
+                // 更新关系
+                var relation = await _deviceMaintenancePlanRelationRepository.FirstOrDefaultAsync(x => x.MaintenancePlanId == oldPlan.Id);
+                if (relation != null)
+                {
+                    relation.TemplateId = input.TemplateId;
+                    await _deviceMaintenancePlanRelationRepository.UpdateAsync(relation);
+                }
+            }
+            else
+            {
+                // 创建新计划
+                var template = await _maintenanceTemplateRepository.GetAsync(input.TemplateId);
+                var plan = new MaintenancePlans
+                {
+                    PlanName = $"{template.TemplateName} - {level}保养计划",
+                    DeviceId = device.Id,
+                    TemplateId = template.Id,
+                    MaintenanceLevel = level,
+                    CycleType = GetCycleType(level),
+                    CycleDays = cycleDays,
+                    FirstMaintenanceDate = firstDate,
+                    NextMaintenanceDate = nextDate,
+                    Status = "启用",
+                };
+                var planId = await _maintenancePlanRepository.InsertAndGetIdAsync(plan);
+
+                var relation = new DeviceMaintenancePlanRelation
+                {
+                    DeviceId = device.Id,
+                    MaintenancePlanId = planId,
+                    MaintenanceLevel = level,
+                    TemplateId = template.Id
+                };
+                await _deviceMaintenancePlanRelationRepository.InsertAsync(relation);
+            }
+        }
+
+
+        /// <summary>
+        /// 停用设备保养计划
+        /// </summary>
+        private async Task DeactivateMaintenancePlansForDevice(Guid deviceId)
+        {
+            try
+            {
+                var relations = await _deviceMaintenancePlanRelationRepository.GetAll()
+                    .Where(x => x.DeviceId == deviceId)
+                    .Select(x => x.MaintenancePlanId)
+                    .ToListAsync();
+
+                foreach (var planId in relations)
+                {
+                    var plan = await _maintenancePlanRepository.FirstOrDefaultAsync(planId);
+                    if (plan != null)
+                    {
+                        plan.Status = "停用";
+                        await _maintenancePlanRepository.UpdateAsync(plan);
+                    }
+                }
+
+                await CurrentUnitOfWork.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"停用设备保养计划失败: DeviceId={deviceId}", ex);
+            }
+        }
+
+        /// <summary>
+        /// 计算下次保养日期
+        /// </summary>
+        private DateTime CalculateNextMaintenanceDate(DateTime lastDate, string level)
+        {
+            int days = GetCycleDays(level);
+            DateTime nextDate = lastDate.AddDays(days);
+
+            // 如果是周末，顺延到下一个工作日
+            while (nextDate.DayOfWeek == DayOfWeek.Saturday || nextDate.DayOfWeek == DayOfWeek.Sunday)
+            {
+                nextDate = nextDate.AddDays(1);
+            }
+
+            return nextDate;
+        }
+
+        /// <summary>
+        /// 获取周期类型
+        /// </summary>
+        private string GetCycleType(string level)
+        {
+            return level switch
+            {
+                "月度" => "按月",
+                "季度" => "按季",
+                "半年度" => "半年",
+                "年度" => "按年",
+                _ => "其他"
+            };
+        }
+
+        /// <summary>
+        /// 获取周期天数
+        /// </summary>
+        private int GetCycleDays(string level)
+        {
+            return level switch
+            {
+                "月度" => 30,
+                "季度" => 90,
+                "半年度" => 180,
+                "年度" => 365,
+                _ => 30
+            };
         }
 
         #endregion
@@ -1436,9 +1793,24 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                             .FirstOrDefaultAsync(x => x.DeviceChangeApplicationId == apply.Id);
 
                         Devices device = null;
+                        // 获取保养计划信息（如果设备已存在）
+                        object maintenancePlans = null;
                         if (relation != null && relation.DeviceId != Guid.Empty)
                         {
                             device = await _deviceRepository.FirstOrDefaultAsync(relation.DeviceId);
+
+                            try
+                            {
+                                // 直接使用仓储获取保养计划
+                                var plans = await _maintenancePlanRepository.GetAll()
+                                    .Where(p => p.DeviceId == device.Id)
+                                    .ToListAsync();
+                                maintenancePlans = plans;
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Warn($"获取保养计划失败: {ex.Message}");
+                            }
                         }
 
                         DeviceEditInput snapshot = null;
@@ -1465,7 +1837,8 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                             ApplyReason = apply.ApplyReason,
                             SubmitTime = apply.SubmitTime,
                             Snapshot = snapshot,
-                            NewData = newData
+                            NewData = newData,
+                            MaintenancePlans = maintenancePlans
                         };
                     }
                 }
@@ -1502,7 +1875,6 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                 throw new UserFriendlyException(ex.Message);
             }
         }
-
 
         /// <summary>
         /// 获取节点表单权限

@@ -18,35 +18,29 @@ namespace DeviceManagementSystem.Maintenances
         /// <summary>
         /// 模板名称
         /// </summary>
-        [MaxLength(100)]
+        [StringLength(100)]
         public string TemplateName { get; set; }
 
         /// <summary>
-        /// 模板编号
+        /// 设备类型ID
         /// </summary>
-        [MaxLength(50)]
-        public string TemplateCode { get; set; }
+        public Guid DeviceTypeId { get; set; }
 
         /// <summary>
-        /// 保养等级（月度：Monthly/季度：Quarter/半年度：Half-Yearly/年度：Annual）
+        /// 保养等级（月度、季度、半年度、年度）
         /// </summary>
-        [MaxLength(50)]
+        [StringLength(20)]
         public string MaintenanceLevel { get; set; }
 
         /// <summary>
         /// 模板描述
         /// </summary>
-        [MaxLength(500)]
+        [StringLength(500)]
         public string Description { get; set; }
 
         /// <summary>
         /// 状态（启用/停用）
         /// </summary>
-        public bool? IsActive { get; set; } = true;
-
-        /// <summary>
-        /// 版本号
-        /// </summary>
-        public int Version { get; set; } = 1;
+        public bool IsActive { get; set; } = true;
     }
 }

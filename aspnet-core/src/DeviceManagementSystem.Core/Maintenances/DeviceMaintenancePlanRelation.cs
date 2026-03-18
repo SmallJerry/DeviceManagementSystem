@@ -7,28 +7,33 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace DeviceManagementSystem.DeviceInfos
+namespace DeviceManagementSystem.Maintenances
 {
     /// <summary>
-    /// 设备与保养计划关系
+    /// 设备与保养计划关系表
     /// </summary>
     [Table("DeviceMaintenancePlanRelation")]
-    public class DeviceMaintenancePlanRelations : Entity<Guid>
+    public class DeviceMaintenancePlanRelation : Entity<Guid>
     {
         /// <summary>
-        /// 设备Id
+        /// 设备ID
         /// </summary>
         public Guid DeviceId { get; set; }
 
         /// <summary>
-        /// 保养计划Id
+        /// 保养计划ID
         /// </summary>
         public Guid MaintenancePlanId { get; set; }
 
         /// <summary>
-        /// 周期类型（年度、季度、月度）
+        /// 保养等级
         /// </summary>
-        [StringLength(20)]
-        public string CycleType { get; set; }
+        [MaxLength(20)]
+        public string MaintenanceLevel { get; set; }
+
+        /// <summary>
+        /// 模板ID
+        /// </summary>
+        public Guid TemplateId { get; set; }
     }
 }

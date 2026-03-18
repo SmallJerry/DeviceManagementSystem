@@ -4,6 +4,7 @@ using DeviceManagementSystem.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DeviceManagementSystem.Migrations
 {
     [DbContext(typeof(DeviceManagementSystemDbContext))]
-    partial class DeviceManagementSystemDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260316111012_Update_MaintenanceItems_202603161910")]
+    partial class Update_MaintenanceItems_202603161910
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2934,6 +2937,27 @@ namespace DeviceManagementSystem.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("MaintenanceStandard");
+                });
+
+            modelBuilder.Entity("DeviceManagementSystem.Maintenances.MaintenanceTaskAttachmentRelation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("AttachmentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AttachmentType")
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<Guid>("TaskId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("MaintenanceTaskAttachmentRelation");
                 });
 
             modelBuilder.Entity("DeviceManagementSystem.Maintenances.MaintenanceTaskExecutorRelation", b =>

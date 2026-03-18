@@ -16,65 +16,51 @@ namespace DeviceManagementSystem.Maintenances
     public class MaintenanceItems : FullAuditedEntity<Guid>
     {
         /// <summary>
-        /// 项目名称
+        /// 模板ID
         /// </summary>
-        [MaxLength(200)]
-        public string ItemName { get; set; }
+        public Guid TemplateId { get; set; }
 
         /// <summary>
-        /// 保养方式（目测、清洁、气吹、更换）
+        /// 分组ID
         /// </summary>
-        [MaxLength(50)]
-        public string MaintenanceMethod { get; set; }
+        public Guid? GroupId { get; set; }
 
         /// <summary>
-        /// 保养内容及要求
+        /// 点检序号（①、②、③...）
         /// </summary>
-        [MaxLength(1000)]
-        public string Requirement { get; set; }
+        [MaxLength(10)]
+        public string PointNo { get; set; }
 
         /// <summary>
-        /// 标准值/参考值
+        /// 点检项目名称
         /// </summary>
-        [MaxLength(200)]
-        public string StandardValue { get; set; }
-
-        /// <
-        /// <summary>
-        /// 上限值
-        /// </summary>
-        public double? UpperLimit { get; set; }
+        [Required]
+        [MaxLength(100)]
+        public string PointName { get; set; }
 
         /// <summary>
-        /// 下限值
-        /// </summary>
-        public double? LowerLimit { get; set; }
-
-        /// <summary>
-        /// 单位
-        /// </summary>
-        [MaxLength(20)]
-        public string Unit { get; set; }
-
-        /// <summary>
-        /// 排序号
-        /// </summary>
-        public int SortOrder { get; set; }
-
-        /// <summary>
-        /// 是否需要上传图片
-        /// </summary>
-        public bool? NeedImage { get; set; }
-
-        /// <summary>
-        /// 是否需要填写数值
-        /// </summary>
-        public bool? NeedValue { get; set; }
-
-        /// <summary>
-        /// 备注
+        /// 点检内容
         /// </summary>
         [MaxLength(500)]
-        public string Remark { get; set; }
+        public string InspectionContent { get; set; }
+
+        /// <summary>
+        /// 点检方法（JSON数组存储，例如：["清洁","目测"]）
+        /// </summary>
+        [MaxLength(200)]
+        public string InspectionMethod { get; set; }
+
+        /// <summary>
+        /// 分组排序（用于组间排序）
+        /// </summary>
+        public int? GroupSortOrder { get; set; }
+
+        /// <summary>
+        /// 项目排序（用于组内排序）
+        /// </summary>
+        public int? ItemSortOrder { get; set; }
+
+
+
     }
 }

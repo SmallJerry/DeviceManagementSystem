@@ -8,6 +8,7 @@ using DeviceManagementSystem.BasicDataManagement;
 using DeviceManagementSystem.DeviceInfos;
 using DeviceManagementSystem.FileInfos;
 using DeviceManagementSystem.FlowManagement;
+using DeviceManagementSystem.Maintenances;
 using DeviceManagementSystem.MultiTenancy;
 using DeviceManagementSystem.System;
 using DeviceManagementSystem.WorkFlows;
@@ -183,6 +184,86 @@ namespace DeviceManagementSystem.EntityFrameworkCore
         /// 设备与用户关系表
         /// </summary>
         public DbSet<DeviceUserRelations> DeviceUserRelations { get; set; }
+
+
+
+
+
+
+        #region 保养模块相关实体表
+
+
+
+        /// <summary>
+        /// 设备与保养模板关系表
+        /// </summary>
+        public DbSet<DeviceMaintenanceTemplateRelation> DeviceMaintenanceTemplateRelations { get; set; }
+
+
+        /// <summary>
+        /// 保养项目表
+        /// </summary>
+        public DbSet<MaintenanceItems> MaintenanceItems { get; set; }
+
+
+        /// <summary>
+        /// 保养计划表
+        /// </summary>
+        public DbSet<MaintenancePlans> MaintenancePlans { get; set; }
+
+
+
+        /// <summary>
+        /// 保养工单与执行人关系表
+        /// </summary>
+        public DbSet<MaintenanceTaskExecutorRelation> MaintenanceTaskExecutorRelations { get; set; }
+
+
+        /// <summary>
+        /// 保养任务整合组表
+        /// </summary>
+        public DbSet<MaintenanceTaskGroups> MaintenanceTaskGroups { get; set; }
+
+
+        /// <summary>
+        /// 保养工单项目执行记录表
+        /// </summary>
+        public DbSet<MaintenanceTaskItems> MaintenanceTaskItems { get; set; }
+
+
+
+        /// <summary>
+        /// 保养工单表
+        /// </summary>
+        public DbSet<MaintenanceTasks> MaintenanceTasks { get; set; }
+
+
+        /// <summary>
+        /// 保养模板表
+        /// </summary>
+        public DbSet<MaintenanceTemplates> MaintenanceTemplates { get; set; }
+
+
+        /// <summary>
+        /// 设备与保养计划关系表
+        /// </summary>
+        public DbSet<DeviceMaintenancePlanRelation> DeviceMaintenancePlanRelation { get; set; }
+
+
+
+        /// <summary>
+        /// 保养项目分组（点检部位）
+        /// </summary>
+        public DbSet<MaintenanceItemGroups> MaintenanceItemGroups { get; set; }
+
+
+
+        /// <summary>
+        /// 保养标准表
+        /// </summary>
+        public DbSet<MaintenanceStandards> MaintenanceStandards { get; set; }
+
+        #endregion
 
 
 

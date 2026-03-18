@@ -16,52 +16,47 @@ namespace DeviceManagementSystem.Maintenances
     public class MaintenancePlans : FullAuditedEntity<Guid>
     {
         /// <summary>
-        /// 计划编号
-        /// </summary>
-        [Required]
-        [MaxLength(50)]
-        public string PlanCode { get; set; }
-
-        /// <summary>
         /// 计划名称
         /// </summary>
-        [Required]
-        [MaxLength(200)]
+        [StringLength(100)]
         public string PlanName { get; set; }
 
         /// <summary>
-        /// 申请ID（设备建档时的变更申请ID）
+        /// 设备ID
         /// </summary>
-        public Guid? ChangeApplyId { get; set; }
+        public Guid? DeviceId { get; set; }
 
         /// <summary>
-        /// 保养等级（月度/季度/半年度/年度）
+        /// 模板ID
         /// </summary>
-        [Required]
-        [MaxLength(20)]
+        public Guid TemplateId { get; set; }
+
+        /// <summary>
+        /// 保养等级（月度、季度、半年度、年度）
+        /// </summary>
+        [StringLength(20)]
         public string MaintenanceLevel { get; set; }
 
         /// <summary>
-        /// 周期类型（Monthly/Quarterly/HalfYearly/Annual）
+        /// 周期类型（日、周、月、季度、半年、年）
         /// </summary>
-        [Required]
-        [MaxLength(20)]
+        [StringLength(20)]
         public string CycleType { get; set; }
 
         /// <summary>
-        /// 周期值（固定为1）
-        /// </summary>
-        public int CycleValue { get; set; } = 1;
-
-        /// <summary>
-        /// 周期天数（缓存计算值）
+        /// 周期值（天数）
         /// </summary>
         public int CycleDays { get; set; }
 
         /// <summary>
-        /// 首次保养日期（设备启用日期）
+        /// 首次保养日期
         /// </summary>
         public DateTime FirstMaintenanceDate { get; set; }
+
+        /// <summary>
+        /// 下次保养日期
+        /// </summary>
+        public DateTime NextMaintenanceDate { get; set; }
 
         /// <summary>
         /// 上次保养日期
@@ -69,36 +64,20 @@ namespace DeviceManagementSystem.Maintenances
         public DateTime? LastMaintenanceDate { get; set; }
 
         /// <summary>
-        /// 下次保养日期
-        /// </summary>
-        public DateTime? NextMaintenanceDate { get; set; }
-
-        /// <summary>
         /// 计划状态（启用/停用）
         /// </summary>
-        [MaxLength(10)]
-        public string PlanStatus { get; set; } = "启用";
+        [StringLength(20)]
+        public string Status { get; set; } = "启用";
 
         /// <summary>
-        /// 计划描述
+        /// 是否已生成工单
         /// </summary>
-        [MaxLength(500)]
-        public string Description { get; set; }
+        public bool HasGeneratedTask { get; set; }
 
         /// <summary>
-        /// 提前提醒天数
+        /// 备注
         /// </summary>
-        public int RemindDays { get; set; } = 7;
-
-        /// <summary>
-        /// 最后执行人
-        /// </summary>
-        [MaxLength(200)]
-        public string LastExecutor { get; set; }
-
-        /// <summary>
-        /// 最后执行时间
-        /// </summary>
-        public DateTime? LastExecuteTime { get; set; }
+        [StringLength(500)]
+        public string Remark { get; set; }
     }
 }

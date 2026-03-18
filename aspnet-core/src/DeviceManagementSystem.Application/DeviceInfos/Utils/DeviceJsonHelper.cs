@@ -1,11 +1,9 @@
 ﻿using DeviceManagementSystem.DeviceInfos.Dto;
+using DeviceManagementSystem.Maintenances.Dto;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace DeviceManagementSystem.DeviceInfos.Utils
 {
@@ -36,8 +34,17 @@ namespace DeviceManagementSystem.DeviceInfos.Utils
                 // 2. 提取并移除需要特殊处理的字段
                 var technicalParamsStr = jObject["TechnicalParameters"]?.ToString();
                 var customerReqsStr = jObject["CustomerRequirements"]?.ToString();
+                var monthlyMaintenanceStr = jObject["MonthlyMaintenance"]?.ToString();
+                var quarterlyMaintenanceStr = jObject["QuarterlyMaintenance"]?.ToString();
+                var halfYearlyMaintenanceStr = jObject["HalfYearlyMaintenance"]?.ToString();
+                var annualMaintenanceStr = jObject["AnnualMaintenance"]?.ToString();
+
                 jObject.Remove("TechnicalParameters");
                 jObject.Remove("CustomerRequirements");
+                jObject.Remove("MonthlyMaintenance");
+                jObject.Remove("QuarterlyMaintenance");
+                jObject.Remove("HalfYearlyMaintenance");
+                jObject.Remove("AnnualMaintenance");
 
                 // 3. 转换为基础的DeviceEditInput对象
                 var deviceEditInput = jObject.ToObject<DeviceEditInput>();
@@ -52,12 +59,56 @@ namespace DeviceManagementSystem.DeviceInfos.Utils
                 // 处理客户要求
                 deviceEditInput.CustomerRequirements = DeserializeList<CustomerRequirementItem>(customerReqsStr);
 
+                // 处理保养计划
+                deviceEditInput.MonthlyMaintenance = DeserializeMaintenancePlanData(monthlyMaintenanceStr);
+                deviceEditInput.QuarterlyMaintenance = DeserializeMaintenancePlanData(quarterlyMaintenanceStr);
+                deviceEditInput.HalfYearlyMaintenance = DeserializeMaintenancePlanData(halfYearlyMaintenanceStr);
+                deviceEditInput.AnnualMaintenance = DeserializeMaintenancePlanData(annualMaintenanceStr);
+
                 return deviceEditInput;
             }
             catch (Exception ex)
             {
                 // 可根据实际需求调整异常处理策略（日志/抛出自定义异常）
                 throw new InvalidOperationException("反序列化DeviceEditInput失败", ex);
+            }
+        }
+
+        /// <summary>
+        /// 序列化DeviceEditInput对象为JSON字符串
+        /// </summary>
+        /// <param name="input">DeviceEditInput对象</param>
+        /// <returns>JSON字符串</returns>
+        public static string SerializeDeviceEditInput(DeviceEditInput input)
+        {
+            if (input == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                var jObject = JObject.FromObject(input);
+
+                // 将List类型的字段序列化为JSON字符串
+                if (input.TechnicalParameters != null)
+                {
+                    jObject["TechnicalParameters"] = JsonConvert.SerializeObject(input.TechnicalParameters);
+                }
+
+                if (input.CustomerRequirements != null)
+                {
+                    jObject["CustomerRequirements"] = JsonConvert.SerializeObject(input.CustomerRequirements);
+                }
+
+                // 保养计划数据已经是对象格式，不需要特殊处理
+                // 但需要确保它们被正确包含
+
+                return jObject.ToString(Formatting.None);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("序列化DeviceEditInput失败", ex);
             }
         }
 
@@ -83,6 +134,28 @@ namespace DeviceManagementSystem.DeviceInfos.Utils
             {
                 // 解析失败时返回空列表，避免业务中断
                 return new List<T>();
+            }
+        }
+
+        /// <summary>
+        /// 反序列化保养计划数据
+        /// </summary>
+        /// <param name="jsonStr">JSON字符串</param>
+        /// <returns>保养计划数据对象</returns>
+        private static MaintenancePlanDto DeserializeMaintenancePlanData(string jsonStr)
+        {
+            if (string.IsNullOrEmpty(jsonStr) || jsonStr.Trim() == "null")
+            {
+                return null;
+            }
+
+            try
+            {
+                return JsonConvert.DeserializeObject<MaintenancePlanDto>(jsonStr);
+            }
+            catch
+            {
+                return null;
             }
         }
     }

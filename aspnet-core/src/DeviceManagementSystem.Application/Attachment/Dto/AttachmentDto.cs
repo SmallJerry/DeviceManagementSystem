@@ -299,16 +299,70 @@ namespace DeviceManagementSystem.Attachment.Dto
         public string BusinessType { get; set; }
 
         /// <summary>
-        /// 附件ID列表。传入最终需要绑定到该业务下的附件ID列表。
+        /// 附件ID列表（旧版）。传入最终需要绑定到该业务下的附件ID列表。
         /// 系统会自动将传入的附件与该业务建立关系，并解除其他附件与该业务的关系。
+        /// 注意：当同时传入AttachmentWithCategories时，此参数将被忽略
         /// </summary>
         public List<Guid> AttachmentIds { get; set; }
 
-
         /// <summary>
-        /// 附件与分类关系列表（新版）
+        /// 附件与分类关系列表（新版）。传入此参数时，将优先使用它建立附件关系，
+        /// 并忽略AttachmentIds参数。如果不传此参数，系统将使用AttachmentIds建立关系，
+        /// 此时所有附件的分类将为null。
         /// </summary>
         public List<AttachmentWithCategory> AttachmentWithCategories { get; set; }
+
+        /// <summary>
+        /// 获取需要处理的附件列表（统一处理两种传入方式）
+        /// </summary>
+        /// <returns>返回规范化的附件处理项列表</returns>
+        public List<AttachmentProcessItem> GetAttachmentsToProcess()
+        {
+            var result = new List<AttachmentProcessItem>();
+
+            // 优先使用新版带分类的附件列表
+            if (AttachmentWithCategories != null && AttachmentWithCategories.Any())
+            {
+                foreach (var item in AttachmentWithCategories)
+                {
+                    result.Add(new AttachmentProcessItem
+                    {
+                        AttachmentId = item.AttachmentId,
+                        Category = item.Category
+                    });
+                }
+            }
+            // 如果没有新版数据，则使用旧版附件ID列表
+            else if (AttachmentIds != null && AttachmentIds.Any())
+            {
+                foreach (var attachmentId in AttachmentIds)
+                {
+                    result.Add(new AttachmentProcessItem
+                    {
+                        AttachmentId = attachmentId,
+                        Category = null // 旧版没有分类信息
+                    });
+                }
+            }
+
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// 附件处理项（内部使用，统一处理两种数据源）
+    /// </summary>
+    public class AttachmentProcessItem
+    {
+        /// <summary>
+        /// 附件ID
+        /// </summary>
+        public Guid AttachmentId { get; set; }
+
+        /// <summary>
+        /// 附件分类
+        /// </summary>
+        public string Category { get; set; }
     }
 
     /// <summary>
