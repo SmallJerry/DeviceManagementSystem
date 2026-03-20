@@ -3,7 +3,7 @@ using Abp.Auditing;
 using Abp.Authorization;
 using Abp.Domain.Repositories;
 using Abp.Runtime.Caching;
-using DeviceManagementSystem.System;
+using DeviceManagementSystem.Systems;
 using DeviceManagementSystem.SystemConfigs.Enumeration;
 using DeviceManagementSystem.SystemConfigs.param;
 using DeviceManagementSystem.Users.Dto;

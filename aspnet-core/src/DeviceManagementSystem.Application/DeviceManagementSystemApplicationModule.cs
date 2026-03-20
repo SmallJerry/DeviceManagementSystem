@@ -1,7 +1,10 @@
 ﻿using Abp.AutoMapper;
+using Abp.Configuration.Startup;
 using Abp.Modules;
+using Abp.Net.Mail;
 using Abp.Reflection.Extensions;
 using DeviceManagementSystem.Authorization;
+using DeviceManagementSystem.Email;
 
 namespace DeviceManagementSystem
 {
@@ -13,6 +16,7 @@ namespace DeviceManagementSystem
         public override void PreInitialize()
         {
             Configuration.Authorization.Providers.Add<DeviceManagementSystemAuthorizationProvider>();
+            Configuration.ReplaceService<IEmailSender, CustomEmailSender>();
         }
 
         public override void Initialize()

@@ -142,6 +142,18 @@ namespace DeviceManagementSystem.Maintenances
         /// 是否已提醒
         /// </summary>
         public bool IsReminded { get; set; }
+
+
+
+        /// <summary>
+        /// 是否为合并工单
+        /// </summary>
+        public bool IsMergedTask { get; set; } = false;
+
+        /// <summary>
+        /// 合并的计划ID列表（逗号分隔）
+        /// </summary>
+        public string MergedPlanIds { get; set; }
     }
 
 }

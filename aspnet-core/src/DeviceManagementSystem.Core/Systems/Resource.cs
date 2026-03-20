@@ -3,7 +3,7 @@ using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace DeviceManagementSystem.System
+namespace DeviceManagementSystem.Systems
 {
     /// <summary>
     /// 访问资源实体

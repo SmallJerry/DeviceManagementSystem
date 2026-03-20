@@ -6,6 +6,8 @@ using Abp.Extensions;
 using Castle.Facilities.Logging;
 using DeviceManagementSystem.Configuration;
 using DeviceManagementSystem.Identity;
+using Hangfire;
+using Hangfire.Dashboard;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
@@ -66,6 +68,9 @@ namespace DeviceManagementSystem.Web.Host.Startup
                 )
             );
 
+            services.AddHangfire(x => x.UseSqlServerStorage(_appConfiguration.GetValue<string>("ConnectionStrings:Default")));
+            services.AddHangfireServer();
+
             // Swagger - Enable this line and the related lines in Configure method to enable swagger UI
             ConfigureSwagger(services);
 
@@ -86,6 +91,13 @@ namespace DeviceManagementSystem.Web.Host.Startup
             app.UseAbp(options => { options.UseAbpRequestLocalization = false; }); // Initializes ABP framework.
 
             app.UseCors(_defaultCorsPolicyName); // Enable CORS!
+            
+            app.UseHangfireServer();
+            app.UseHangfireDashboard("/hangfire", new DashboardOptions
+            {
+                Authorization = new[] { new HangfireAuthorizationFilter() }
+            });
+
 
             app.UseStaticFiles();
 

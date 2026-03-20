@@ -19,10 +19,7 @@ namespace DeviceManagementSystem.Maintenances.Interface
         /// </summary>
         Task<CommonResult<Page<MaintenanceTaskDto>>> GetPageList([FromQuery] MaintenanceTaskPageInput input);
 
-        /// <summary>
-        /// 获取我的待办工单（按组整合）
-        /// </summary>
-        Task<CommonResult<List<PendingTaskGroupDto>>> GetMyPendingTasks(long? executorId = null);
+
 
         /// <summary>
         /// 获取工单详情
@@ -34,10 +31,6 @@ namespace DeviceManagementSystem.Maintenances.Interface
         /// </summary>
         Task<CommonResult<int>> GenerateNextWeekTasks();
 
-        /// <summary>
-        /// 执行保养工单
-        /// </summary>
-        Task<CommonResult> ExecuteTask(ExecuteMaintenanceTaskInput input);
 
         /// <summary>
         /// 开始执行工单

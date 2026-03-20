@@ -1,5 +1,4 @@
-﻿// MaintenanceTaskAppService.cs
-using Abp.Dependency;
+﻿using Abp.Dependency;
 using Abp.Domain.Repositories;
 using Abp.Domain.Uow;
 using Abp.Runtime.Session;
@@ -7,6 +6,9 @@ using DeviceManagementSystem.Attachment;
 using DeviceManagementSystem.Attachment.Dto;
 using DeviceManagementSystem.BasicDataManagement;
 using DeviceManagementSystem.DeviceInfos;
+using DeviceManagementSystem.Email;
+using DeviceManagementSystem.Email.Dto;
+using DeviceManagementSystem.Maintenances.Constant;
 using DeviceManagementSystem.Maintenances.Dto;
 using DeviceManagementSystem.Maintenances.Interface;
 using DeviceManagementSystem.Users;
@@ -16,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace DeviceManagementSystem.Maintenances
@@ -27,16 +30,15 @@ namespace DeviceManagementSystem.Maintenances
     {
         private readonly IRepository<MaintenanceTasks, Guid> _taskRepository;
         private readonly IRepository<MaintenanceTaskItems, Guid> _taskItemRepository;
-        private readonly IRepository<MaintenanceTaskGroups, Guid> _taskGroupRepository;
         private readonly IRepository<MaintenancePlans, Guid> _planRepository;
         private readonly IRepository<MaintenanceTemplates, Guid> _templateRepository;
-        private readonly IRepository<MaintenanceStandards, Guid> _standardRepository;
         private readonly IRepository<Devices, Guid> _deviceRepository;
         private readonly IRepository<DeviceUserRelations, Guid> _deviceUserRelationRepository;
         private readonly IUserAppService _userAppService;
         private readonly IRepository<MaintenanceItems, Guid> _itemRepository;
         private readonly IRepository<Types, Guid> _typeRepository;
         private readonly IAttachmentAppService _attachmentAppService;
+        private readonly IEmailAppService _emailAppService;
 
         // 工单状态常量
         private const string TASK_STATUS_PLAN = "计划";
@@ -45,55 +47,38 @@ namespace DeviceManagementSystem.Maintenances
         private const string TASK_STATUS_COMPLETED = "已完成";
         private const string TASK_STATUS_CANCELLED = "已取消";
         private const string TASK_STATUS_DELEGATED = "已委派";
+        private const string TASK_STATUS_OVERDUE = "逾期";
 
-
-        /// <summary>
-        /// 构造函数
-        /// </summary>
-        /// <param name="taskRepository"></param>
-        /// <param name="taskItemRepository"></param>
-        /// <param name="taskGroupRepository"></param>
-        /// <param name="planRepository"></param>
-        /// <param name="templateRepository"></param>
-        /// <param name="standardRepository"></param>
-        /// <param name="deviceRepository"></param>
-        /// <param name="deviceUserRelationRepository"></param>
-        /// <param name="userAppService"></param>
-        /// <param name="itemRepository"></param>
-        /// <param name="typeRepository"></param>
-        /// <param name="attachmentAppService"></param>
         public MaintenanceTaskAppService(
             IRepository<MaintenanceTasks, Guid> taskRepository,
             IRepository<MaintenanceTaskItems, Guid> taskItemRepository,
-            IRepository<MaintenanceTaskGroups, Guid> taskGroupRepository,
             IRepository<MaintenancePlans, Guid> planRepository,
             IRepository<MaintenanceTemplates, Guid> templateRepository,
-            IRepository<MaintenanceStandards, Guid> standardRepository,
             IRepository<Devices, Guid> deviceRepository,
             IRepository<DeviceUserRelations, Guid> deviceUserRelationRepository,
             IUserAppService userAppService,
             IRepository<MaintenanceItems, Guid> itemRepository,
             IRepository<Types, Guid> typeRepository,
-            IAttachmentAppService attachmentAppService)
+            IAttachmentAppService attachmentAppService,
+            IEmailAppService emailAppService)
         {
             _taskRepository = taskRepository;
             _taskItemRepository = taskItemRepository;
-            _taskGroupRepository = taskGroupRepository;
             _planRepository = planRepository;
             _templateRepository = templateRepository;
-            _standardRepository = standardRepository;
             _deviceRepository = deviceRepository;
             _deviceUserRelationRepository = deviceUserRelationRepository;
             _userAppService = userAppService;
             _itemRepository = itemRepository;
             _typeRepository = typeRepository;
             _attachmentAppService = attachmentAppService;
+            _emailAppService = emailAppService;
         }
 
         #region 查询方法
 
         /// <summary>
-        /// 获取工单分页列表
+        /// 获取工单分页列表（全部工单）
         /// </summary>
         public async Task<CommonResult<Page<MaintenanceTaskDto>>> GetPageList([FromQuery] MaintenanceTaskPageInput input)
         {
@@ -124,6 +109,13 @@ namespace DeviceManagementSystem.Maintenances
                     query = query.Where(x => x.Task.DeviceId == input.DeviceId.Value);
                 }
 
+
+                if (input.DeviceTypeId.HasValue)
+                {
+                    query = query.Where(x => x.Template.DeviceTypeId == input.DeviceTypeId.Value);
+                }
+
+
                 if (!string.IsNullOrWhiteSpace(input.MaintenanceLevel))
                 {
                     query = query.Where(x => x.Task.MaintenanceLevel == input.MaintenanceLevel);
@@ -143,15 +135,6 @@ namespace DeviceManagementSystem.Maintenances
                 {
                     var endDate = input.StartDateEnd.Value.AddDays(1).AddSeconds(-1);
                     query = query.Where(x => x.Task.PlanStartDate <= endDate);
-                }
-
-                if (input.OnlyMyPending == true)
-                {
-                    var userId = AbpSession.UserId.Value;
-                    query = query.Where(x => x.Task.ExecutorIds.Contains(userId.ToString()) &&
-                                            (x.Task.Status == TASK_STATUS_PENDING ||
-                                             x.Task.Status == TASK_STATUS_EXECUTING ||
-                                             x.Task.Status == TASK_STATUS_PLAN));
                 }
 
                 var total = await query.CountAsync();
@@ -184,146 +167,137 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
-
-
-
-
-
-
         /// <summary>
-        /// 获取我的待办工单（按组整合）
+        /// 获取我的待办工单（按状态分类）
         /// </summary>
-        public async Task<CommonResult<List<PendingTaskGroupDto>>> GetMyPendingTasks(long? executorId = null)
+        public async Task<CommonResult<MyTaskStatisticsDto>> GetMyTasks(long? executorId = null)
         {
             try
             {
                 var userId = executorId ?? AbpSession.UserId.Value;
                 var userIdStr = userId.ToString();
 
-                // 获取用户待办工单
+                // 获取用户相关的所有工单
                 var tasks = await _taskRepository.GetAll()
-                    .Where(x => x.ExecutorIds.Contains(userIdStr) &&
-                               (x.Status == TASK_STATUS_PLAN ||
-                                x.Status == TASK_STATUS_PENDING ||
-                                x.Status == TASK_STATUS_EXECUTING))
-                    .OrderBy(x => x.PlanStartDate)
+                    .Where(x => x.ExecutorIds.Contains(userIdStr))
+                    .OrderByDescending(x => x.PlanStartDate)
                     .ToListAsync();
 
-                // 按组ID分组
-                var groupedTasks = tasks
-                    .Where(x => x.GroupId.HasValue)
-                    .GroupBy(x => x.GroupId.Value)
-                    .ToDictionary(g => g.Key, g => g.ToList());
-
-                var ungroupedTasks = tasks.Where(x => !x.GroupId.HasValue).ToList();
-
-                var result = new List<PendingTaskGroupDto>();
-
-                // 处理有组的任务
-                foreach (var group in groupedTasks)
+                var result = new MyTaskStatisticsDto
                 {
-                    var groupInfo = await _taskGroupRepository.FirstOrDefaultAsync(group.Key);
-                    if (groupInfo == null) continue;
+                    AllCount = tasks.Count,
+                    PendingCount = tasks.Count(x => x.Status == TASK_STATUS_PENDING),
+                    PlanCount = tasks.Count(x => x.Status == TASK_STATUS_PLAN),
+                    ExecutingCount = tasks.Count(x => x.Status == TASK_STATUS_EXECUTING),
+                    CompletedCount = tasks.Count(x => x.Status == TASK_STATUS_COMPLETED),
+                    OverdueCount = tasks.Count(x => x.Status == TASK_STATUS_OVERDUE),
+                    Tasks = new List<MaintenanceTaskDto>()
+                };
 
-                    var groupDto = new PendingTaskGroupDto
-                    {
-                        GroupId = group.Key,
-                        GroupNo = groupInfo.GroupNo,
-                        GroupName = groupInfo.GroupName,
-                        PlanStartDate = groupInfo.PlanStartDate,
-                        PlanEndDate = groupInfo.PlanEndDate,
-                        DeviceCount = group.Value.Select(t => t.DeviceId).Distinct().Count(),
-                        Tasks = new List<MaintenanceTaskDto>()
-                    };
+                foreach (var task in tasks)
+                {
+                    var device = await _deviceRepository.FirstOrDefaultAsync(task.DeviceId);
+                    var template = await _templateRepository.FirstOrDefaultAsync(task.TemplateId);
+                    var dto = await MapToDto(task, device, template);
 
-                    foreach (var task in group.Value)
-                    {
-                        var device = await _deviceRepository.FirstOrDefaultAsync(task.DeviceId);
-                        var template = await _templateRepository.FirstOrDefaultAsync(task.TemplateId);
-                        var taskDto = await MapToDto(task, device, template);
+                    // 获取工单项目（包含来源周期信息）
+                    var items = await _taskItemRepository.GetAll()
+                        .Where(x => x.TaskId == task.Id)
+                        .OrderBy(x => x.SortOrder)
+                        .Select(x => new MaintenanceTaskItemDto
+                        {
+                            Id = x.Id,
+                            TaskId = x.TaskId,
+                            ItemId = x.ItemId,
+                            ItemName = x.ItemName,
+                            MaintenanceMethod = x.MaintenanceMethod,
+                            Content = x.Content,
+                            StandardValue = x.StandardValue,
+                            Result = x.Result,
+                            ActualValue = x.ActualValue,
+                            Remark = x.Remark,
+                            SortOrder = x.SortOrder,
+                            SourcePlanId = x.SourcePlanId,
+                            SourceMaintenanceLevel = x.SourceMaintenanceLevel
+                        })
+                        .ToListAsync();
 
-                        // 获取工单项目
-                        var items = await _taskItemRepository.GetAll()
-                            .Where(x => x.TaskId == task.Id)
-                            .OrderBy(x => x.SortOrder)
-                            .Select(x => new MaintenanceTaskItemDto
-                            {
-                                Id = x.Id,
-                                TaskId = x.TaskId,
-                                ItemId = x.ItemId,
-                                ItemName = x.ItemName,
-                                MaintenanceMethod = x.MaintenanceMethod,
-                                Content = x.Content,
-                                StandardValue = x.StandardValue,
-                                Result = x.Result,
-                                ActualValue = x.ActualValue,
-                                Remark = x.Remark,
-                                SortOrder = x.SortOrder
-                            })
-                            .ToListAsync();
-
-                        taskDto.Items = items;
-                        groupDto.Tasks.Add(taskDto);
-                    }
-
-                    result.Add(groupDto);
+                    dto.Items = items;
+                    result.Tasks.Add(dto);
                 }
 
-                // 处理无组的任务
-                if (ungroupedTasks.Any())
-                {
-                    var ungroupedGroup = new PendingTaskGroupDto
-                    {
-                        GroupId = Guid.Empty,
-                        GroupNo = "SINGLE",
-                        GroupName = "独立任务",
-                        PlanStartDate = ungroupedTasks.Min(x => x.PlanStartDate),
-                        PlanEndDate = ungroupedTasks.Max(x => x.PlanEndDate),
-                        DeviceCount = ungroupedTasks.Select(t => t.DeviceId).Distinct().Count(),
-                        Tasks = new List<MaintenanceTaskDto>()
-                    };
-
-                    foreach (var task in ungroupedTasks)
-                    {
-                        var device = await _deviceRepository.FirstOrDefaultAsync(task.DeviceId);
-                        var template = await _templateRepository.FirstOrDefaultAsync(task.TemplateId);
-                        var taskDto = await MapToDto(task, device, template);
-
-                        var items = await _taskItemRepository.GetAll()
-                            .Where(x => x.TaskId == task.Id)
-                            .OrderBy(x => x.SortOrder)
-                            .Select(x => new MaintenanceTaskItemDto
-                            {
-                                Id = x.Id,
-                                TaskId = x.TaskId,
-                                ItemId = x.ItemId,
-                                ItemName = x.ItemName,
-                                MaintenanceMethod = x.MaintenanceMethod,
-                                Content = x.Content,
-                                StandardValue = x.StandardValue,
-                                Result = x.Result,
-                                ActualValue = x.ActualValue,
-                                Remark = x.Remark,
-                                SortOrder = x.SortOrder
-                            })
-                            .ToListAsync();
-
-                        taskDto.Items = items;
-                        ungroupedGroup.Tasks.Add(taskDto);
-                    }
-
-                    result.Add(ungroupedGroup);
-                }
-
-                return CommonResult<List<PendingTaskGroupDto>>.Success(result);
+                return CommonResult<MyTaskStatisticsDto>.Success(result);
             }
             catch (Exception ex)
             {
                 Logger.Error("获取我的待办工单失败", ex);
-                return CommonResult<List<PendingTaskGroupDto>>.Error($"获取我的待办工单失败: {ex.Message}");
+                return CommonResult<MyTaskStatisticsDto>.Error($"获取我的待办工单失败: {ex.Message}");
             }
         }
 
+        /// <summary>
+        /// 按状态获取我的待办工单
+        /// </summary>
+        public async Task<CommonResult<List<MaintenanceTaskDto>>> GetMyTasksByStatus(string status, long? executorId = null)
+        {
+            try
+            {
+                var userId = executorId ?? AbpSession.UserId.Value;
+                var userIdStr = userId.ToString();
+
+                var query = _taskRepository.GetAll()
+                    .Where(x => x.ExecutorIds.Contains(userIdStr));
+
+                if (!string.IsNullOrWhiteSpace(status) && status != "全部待办")
+                {
+                    query = query.Where(x => x.Status == status);
+                }
+
+                var tasks = await query
+                    .OrderByDescending(x => x.PlanStartDate)
+                    .ToListAsync();
+
+                var result = new List<MaintenanceTaskDto>();
+
+                foreach (var task in tasks)
+                {
+                    var device = await _deviceRepository.FirstOrDefaultAsync(task.DeviceId);
+                    var template = await _templateRepository.FirstOrDefaultAsync(task.TemplateId);
+                    var dto = await MapToDto(task, device, template);
+
+                    var items = await _taskItemRepository.GetAll()
+                        .Where(x => x.TaskId == task.Id)
+                        .OrderBy(x => x.SortOrder)
+                        .Select(x => new MaintenanceTaskItemDto
+                        {
+                            Id = x.Id,
+                            TaskId = x.TaskId,
+                            ItemId = x.ItemId,
+                            ItemName = x.ItemName,
+                            MaintenanceMethod = x.MaintenanceMethod,
+                            Content = x.Content,
+                            StandardValue = x.StandardValue,
+                            Result = x.Result,
+                            ActualValue = x.ActualValue,
+                            Remark = x.Remark,
+                            SortOrder = x.SortOrder,
+                            SourcePlanId = x.SourcePlanId,
+                            SourceMaintenanceLevel = x.SourceMaintenanceLevel
+                        })
+                        .ToListAsync();
+
+                    dto.Items = items;
+                    result.Add(dto);
+                }
+
+                return CommonResult<List<MaintenanceTaskDto>>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("获取我的待办工单失败", ex);
+                return CommonResult<List<MaintenanceTaskDto>>.Error($"获取我的待办工单失败: {ex.Message}");
+            }
+        }
 
         /// <summary>
         /// 获取工单详情
@@ -358,16 +332,17 @@ namespace DeviceManagementSystem.Maintenances
                         Result = x.Result,
                         ActualValue = x.ActualValue,
                         Remark = x.Remark,
-                        SortOrder = x.SortOrder
+                        SortOrder = x.SortOrder,
+                        SourcePlanId = x.SourcePlanId,
+                        SourceMaintenanceLevel = x.SourceMaintenanceLevel
                     })
                     .ToListAsync();
 
                 dto.Items = items;
 
-
                 // 获取附件列表
                 var attachments = await _attachmentAppService.GetBusinessAttachments(
-                    new Attachment.Dto.GetBusinessAttachmentsInput
+                    new GetBusinessAttachmentsInput
                     {
                         BusinessId = id,
                         BusinessType = "MaintenanceTask"
@@ -387,9 +362,6 @@ namespace DeviceManagementSystem.Maintenances
                     }).ToList();
                 }
 
-
-
-                // 获取设备位置
                 if (device != null)
                 {
                     dto.DeviceLocation = device.Location;
@@ -420,52 +392,28 @@ namespace DeviceManagementSystem.Maintenances
                                x.Status == TASK_STATUS_PLAN)
                     .ToListAsync();
 
-                // 按组分组
-                var groups = new Dictionary<Guid?, List<MaintenanceTasks>>();
+                var result = new List<PendingRemindTaskDto>();
 
                 foreach (var task in tasks)
                 {
-                    var key = task.GroupId;
-                    if (!groups.ContainsKey(key))
-                    {
-                        groups[key] = new List<MaintenanceTasks>();
-                    }
-                    groups[key].Add(task);
-                }
-
-                var result = new List<PendingRemindTaskDto>();
-
-                foreach (var group in groups)
-                {
-                    var groupId = group.Key;
-                    var groupTasks = group.Value;
-
-                    MaintenanceTaskGroups groupInfo = null;
-                    if (groupId.HasValue)
-                    {
-                        groupInfo = await _taskGroupRepository.FirstOrDefaultAsync(groupId.Value);
-                    }
-
+                    var device = await _deviceRepository.FirstOrDefaultAsync(task.DeviceId);
                     var dto = new PendingRemindTaskDto
                     {
-                        GroupId = groupId,
-                        GroupName = groupInfo?.GroupName ?? "待办任务",
-                        RemindDate = today,
-                        PlanStartDate = groupTasks.Min(x => x.PlanStartDate),
-                        PlanEndDate = groupTasks.Max(x => x.PlanEndDate),
-                        ExecutorNames = groupInfo?.ExecutorNames ?? string.Join(",", groupTasks.Select(x => x.ExecutorNames).Distinct()),
-                        Tasks = new List<MaintenanceTaskDto>(),
-                        DeviceCount = groupTasks.Select(t => t.DeviceId).Distinct().Count()
+                        TaskId = task.Id,
+                        TaskNo = task.TaskNo,
+                        TaskName = task.TaskName,
+                        DeviceId = task.DeviceId,
+                        DeviceName = device?.DeviceName,
+                        DeviceCode = device?.DeviceCode,
+                        MaintenanceLevel = task.MaintenanceLevel,
+                        PlanStartDate = task.PlanStartDate,
+                        PlanEndDate = task.PlanEndDate,
+                        RemindDate = task.RemindDate.Value,
+                        ExecutorIds = task.ExecutorIds,
+                        ExecutorNames = task.ExecutorNames,
+                        IsMergedTask = task.IsMergedTask,
+                        Status = task.Status
                     };
-
-                    foreach (var task in groupTasks)
-                    {
-                        var device = await _deviceRepository.FirstOrDefaultAsync(task.DeviceId);
-                        var template = await _templateRepository.FirstOrDefaultAsync(task.TemplateId);
-                        var taskDto = await MapToDto(task, device, template);
-                        dto.Tasks.Add(taskDto);
-                    }
-
                     result.Add(dto);
                 }
 
@@ -478,14 +426,12 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
-
-
         #endregion
 
         #region 工单生成
 
         /// <summary>
-        /// 生成下周保养工单（带合并执行逻辑）
+        /// 生成下周保养工单（智能合并）
         /// </summary>
         [UnitOfWork]
         public async Task<CommonResult<int>> GenerateNextWeekTasks()
@@ -493,21 +439,20 @@ namespace DeviceManagementSystem.Maintenances
             try
             {
                 var today = DateTime.Today;
-                var nextWeek = today.AddDays(7);
                 var nextTwoWeeks = today.AddDays(14);
 
-                // 获取所有启用的计划
                 var plans = await _planRepository.GetAll()
                     .Where(x => x.Status == "启用" &&
                                !x.HasGeneratedTask &&
-                               x.DeviceId.HasValue)
+                               x.DeviceId.HasValue &&
+                               x.NextMaintenanceDate >= today &&
+                               x.NextMaintenanceDate <= nextTwoWeeks)
+                    .OrderBy(x => x.DeviceId)
+                    .ThenBy(x => x.NextMaintenanceDate)
                     .ToListAsync();
 
-                // 按设备分组计划
                 var plansByDevice = plans.GroupBy(x => x.DeviceId.Value);
-
-                var generatedTasks = new List<MaintenanceTasks>();
-                var taskGroups = new Dictionary<string, List<MaintenancePlans>>();
+                var generatedCount = 0;
 
                 foreach (var devicePlans in plansByDevice)
                 {
@@ -515,68 +460,57 @@ namespace DeviceManagementSystem.Maintenances
                     var device = await _deviceRepository.FirstOrDefaultAsync(deviceId);
                     if (device == null) continue;
 
-                    // 获取设备的下次保养日期
-                    var deviceNextDates = devicePlans
-                        .Where(p => p.NextMaintenanceDate >= today && p.NextMaintenanceDate <= nextTwoWeeks)
-                        .GroupBy(p => p.NextMaintenanceDate.Date)
-                        .ToDictionary(g => g.Key, g => g.ToList());
+                    var planList = devicePlans.OrderBy(p => p.NextMaintenanceDate).ToList();
+                    var processedIndex = 0;
 
-                    foreach (var dateGroup in deviceNextDates)
+                    while (processedIndex < planList.Count)
                     {
-                        var date = dateGroup.Key;
-                        var plansOnDate = dateGroup.Value;
+                        var currentPlan = planList[processedIndex];
+                        var baseDate = currentPlan.NextMaintenanceDate;
 
-                        // 检查是否有多个计划在同一天
-                        if (plansOnDate.Count > 1)
+                        var plansToMerge = new List<MaintenancePlans>();
+                        var mergeEndIndex = processedIndex;
+
+                        while (mergeEndIndex < planList.Count)
                         {
-                            // 多个计划在同一天 - 需要合并执行
-                            var groupKey = $"{deviceId}_{date:yyyyMMdd}_merged";
+                            var checkPlan = planList[mergeEndIndex];
+                            var daysDiff = (checkPlan.NextMaintenanceDate - baseDate).Days;
 
-                            if (!taskGroups.ContainsKey(groupKey))
+                            if (daysDiff <= 7)
                             {
-                                taskGroups[groupKey] = new List<MaintenancePlans>();
+                                plansToMerge.Add(checkPlan);
+                                mergeEndIndex++;
                             }
+                            else
+                            {
+                                break;
+                            }
+                        }
 
-                            taskGroups[groupKey].AddRange(plansOnDate);
+                        if (plansToMerge.Count > 1)
+                        {
+                            await GenerateMergedTask(plansToMerge, device);
+                            foreach (var plan in plansToMerge)
+                            {
+                                plan.HasGeneratedTask = true;
+                                await _planRepository.UpdateAsync(plan);
+                            }
+                            generatedCount++;
+                            processedIndex = mergeEndIndex;
                         }
                         else
                         {
-                            // 单个计划 - 单独生成工单
-                            foreach (var plan in plansOnDate)
-                            {
-                                await GenerateSingleTask(plan, device);
-                                plan.HasGeneratedTask = true;
-                                generatedTasks.Add(new MaintenanceTasks { Id = Guid.NewGuid() });
-                            }
+                            await GenerateSingleTask(currentPlan, device);
+                            currentPlan.HasGeneratedTask = true;
+                            await _planRepository.UpdateAsync(currentPlan);
+                            generatedCount++;
+                            processedIndex++;
                         }
-                    }
-                }
-
-                // 处理需要合并的计划组
-                foreach (var group in taskGroups)
-                {
-                    var groupPlans = group.Value;
-                    var firstPlan = groupPlans.First();
-                    var device = await _deviceRepository.FirstOrDefaultAsync(firstPlan.DeviceId.Value);
-
-                    if (device == null) continue;
-
-                    // 创建合并工单组
-                    var groupEntity = await CreateMergedTaskGroup(groupPlans, device);
-
-                    // 为每个计划创建工单（但关联到同一组）
-                    foreach (var plan in groupPlans)
-                    {
-                        var task = await CreateTaskForPlan(plan, device, groupEntity.Id);
-                        plan.HasGeneratedTask = true;
-                        generatedTasks.Add(task);
                     }
                 }
 
                 await CurrentUnitOfWork.SaveChangesAsync();
-
-                return CommonResult<int>.Success($"成功生成 {generatedTasks.Count} 个工单（含合并执行）",
-                    generatedTasks.Count);
+                return CommonResult<int>.Success($"成功生成 {generatedCount} 个工单", generatedCount);
             }
             catch (Exception ex)
             {
@@ -618,18 +552,87 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
+        private async Task GenerateMergedTask(List<MaintenancePlans> plans, Devices device)
+        {
+            var remindDate = plans.Min(p => p.NextMaintenanceDate).AddDays(-7);
+            if (remindDate < DateTime.Today) remindDate = DateTime.Today;
 
-        /// <summary>
-        /// 生成单个工单
-        /// </summary>
+            var allItems = new List<(MaintenanceItems Item, MaintenancePlans Plan)>();
+            var levelNames = string.Join("+", plans.Select(p => p.MaintenanceLevel).Distinct());
+
+            foreach (var plan in plans)
+            {
+                var template = await _templateRepository.FirstOrDefaultAsync(plan.TemplateId);
+                var items = await _itemRepository.GetAll()
+                    .Where(x => x.TemplateId == plan.TemplateId)
+                    .OrderBy(x => x.GroupSortOrder)
+                    .ThenBy(x => x.ItemSortOrder)
+                    .ToListAsync();
+
+                foreach (var item in items)
+                {
+                    allItems.Add((item, plan));
+                }
+            }
+
+            var distinctItems = allItems
+                .GroupBy(x => x.Item.Id)
+                .Select(g => g.First())
+                .ToList();
+
+            var executorIds = await GetDeviceMaintainers(device.Id);
+            var executorNames = await GetUserNames(executorIds);
+
+            var taskNo = $"MT-{DateTime.Now:yyyyMMddHHmmss}{new Random().Next(100, 999)}";
+            var taskName = $"{device.DeviceName} - 合并保养({levelNames})";
+            var maxDate = plans.Max(p => p.NextMaintenanceDate);
+
+            var task = new MaintenanceTasks
+            {
+                TaskNo = taskNo,
+                TaskName = taskName,
+                DeviceId = device.Id,
+                PlanId = plans.First().Id,
+                TemplateId = Guid.Empty,
+                MaintenanceLevel = levelNames,
+                Status = TASK_STATUS_PLAN,
+                PlanStartDate = remindDate,
+                PlanEndDate = maxDate,
+                RemindDate = remindDate,
+                ExecutorIds = string.Join(",", executorIds),
+                ExecutorNames = string.Join(",", executorNames),
+                CreateType = "自动",
+                IsMergedTask = true,
+                MergedPlanIds = string.Join(",", plans.Select(p => p.Id.ToString()))
+            };
+
+            var taskId = await _taskRepository.InsertAndGetIdAsync(task);
+
+            var sortOrder = 1;
+            foreach (var item in distinctItems)
+            {
+                var taskItem = new MaintenanceTaskItems
+                {
+                    TaskId = taskId,
+                    ItemId = item.Item.Id,
+                    ItemName = item.Item.PointName,
+                    MaintenanceMethod = string.Join("、", item.Item.InspectionMethod),
+                    Content = item.Item.InspectionContent,
+                    StandardValue = null,
+                    SortOrder = sortOrder++,
+                    SourcePlanId = item.Plan.Id,
+                    SourceMaintenanceLevel = item.Plan.MaintenanceLevel
+                };
+                await _taskItemRepository.InsertAsync(taskItem);
+            }
+        }
+
         private async Task GenerateSingleTask(MaintenancePlans plan, Devices device)
         {
             var remindDate = plan.NextMaintenanceDate.AddDays(-7);
             if (remindDate < DateTime.Today) remindDate = DateTime.Today;
 
             var template = await _templateRepository.FirstOrDefaultAsync(plan.TemplateId);
-
-            // 获取模板的保养项目
             var items = await _itemRepository.GetAll()
                 .Where(x => x.TemplateId == plan.TemplateId)
                 .OrderBy(x => x.GroupSortOrder)
@@ -640,67 +643,12 @@ namespace DeviceManagementSystem.Maintenances
             var executorNames = await GetUserNames(executorIds);
 
             var taskNo = $"MT-{DateTime.Now:yyyyMMddHHmmss}{new Random().Next(100, 999)}";
+            var taskName = $"{device.DeviceName} - {template?.TemplateName} ({plan.MaintenanceLevel})";
 
             var task = new MaintenanceTasks
             {
                 TaskNo = taskNo,
-                TaskName = $"{device.DeviceName} - {template?.TemplateName} ({plan.MaintenanceLevel})",
-                DeviceId = device.Id,
-                PlanId = plan.Id,
-                TemplateId = plan.TemplateId,
-                MaintenanceLevel = plan.MaintenanceLevel,
-                Status = TASK_STATUS_PLAN,
-                PlanStartDate = remindDate,
-                PlanEndDate = plan.NextMaintenanceDate,
-                RemindDate = remindDate,
-                ExecutorIds = string.Join(",", executorIds),
-                ExecutorNames = string.Join(",", executorNames),
-                CreateType = "自动"
-            };
-
-            var taskId = await _taskRepository.InsertAndGetIdAsync(task);
-
-            // 创建工单项目
-            foreach (var item in items)
-            {
-                var taskItem = new MaintenanceTaskItems
-                {
-                    TaskId = taskId,
-                    ItemId = item.Id,
-                    ItemName = item.PointName,
-                    MaintenanceMethod = string.Join("、", item.InspectionMethod),
-                    Content = item.InspectionContent,
-                    StandardValue = null,
-                    SortOrder = (int)item.ItemSortOrder
-                };
-                await _taskItemRepository.InsertAsync(taskItem);
-            }
-        }
-
-        /// <summary>
-        /// 为计划创建工单（可指定组ID）
-        /// </summary>
-        private async Task<MaintenanceTasks> CreateTaskForPlan(MaintenancePlans plan, Devices device, Guid? groupId = null)
-        {
-            var remindDate = plan.NextMaintenanceDate.AddDays(-7);
-            if (remindDate < DateTime.Today) remindDate = DateTime.Today;
-
-            var template = await _templateRepository.FirstOrDefaultAsync(plan.TemplateId);
-            var items = await _itemRepository.GetAll()
-                .Where(x => x.TemplateId == plan.TemplateId)
-                .OrderBy(x => x.GroupSortOrder)
-                .ThenBy(x => x.ItemSortOrder)
-                .ToListAsync();
-
-            var executorIds = await GetDeviceMaintainers(device.Id);
-            var executorNames = await GetUserNames(executorIds);
-
-            var taskNo = $"MT-{DateTime.Now:yyyyMMddHHmmss}{new Random().Next(100, 999)}";
-
-            var task = new MaintenanceTasks
-            {
-                TaskNo = taskNo,
-                TaskName = $"{device.DeviceName} - {template?.TemplateName} ({plan.MaintenanceLevel})",
+                TaskName = taskName,
                 DeviceId = device.Id,
                 PlanId = plan.Id,
                 TemplateId = plan.TemplateId,
@@ -712,12 +660,12 @@ namespace DeviceManagementSystem.Maintenances
                 ExecutorIds = string.Join(",", executorIds),
                 ExecutorNames = string.Join(",", executorNames),
                 CreateType = "自动",
-                GroupId = groupId
+                IsMergedTask = false
             };
 
             var taskId = await _taskRepository.InsertAndGetIdAsync(task);
 
-            // 创建工单项目
+            var sortOrder = 1;
             foreach (var item in items)
             {
                 var taskItem = new MaintenanceTaskItems
@@ -728,59 +676,20 @@ namespace DeviceManagementSystem.Maintenances
                     MaintenanceMethod = string.Join("、", item.InspectionMethod),
                     Content = item.InspectionContent,
                     StandardValue = null,
-                    SortOrder = (int)item.ItemSortOrder
+                    SortOrder = sortOrder++,
+                    SourcePlanId = plan.Id,
+                    SourceMaintenanceLevel = plan.MaintenanceLevel
                 };
                 await _taskItemRepository.InsertAsync(taskItem);
             }
-
-            return task;
         }
-
-        /// <summary>
-        /// 创建合并工单组
-        /// </summary>
-        private async Task<MaintenanceTaskGroups> CreateMergedTaskGroup(List<MaintenancePlans> plans, Devices device)
-        {
-            var firstPlan = plans.First();
-            var remindDate = firstPlan.NextMaintenanceDate.AddDays(-7);
-            if (remindDate < DateTime.Today) remindDate = DateTime.Today;
-
-            // 获取所有模板名称
-            var templateIds = plans.Select(p => p.TemplateId).Distinct().ToList();
-            var templates = await _templateRepository.GetAll()
-                .Where(t => templateIds.Contains(t.Id))
-                .ToDictionaryAsync(t => t.Id, t => t.TemplateName);
-
-            var levelNames = string.Join("+", plans.Select(p => p.MaintenanceLevel).Distinct());
-            var groupName = $"{device.DeviceName} - 合并保养({levelNames})";
-
-            var executorIds = await GetDeviceMaintainers(device.Id);
-            var executorNames = await GetUserNames(executorIds);
-
-            var groupNo = $"MG-{DateTime.Now:yyyyMMddHHmmss}{new Random().Next(100, 999)}";
-
-            var group = new MaintenanceTaskGroups
-            {
-                GroupNo = groupNo,
-                GroupName = groupName,
-                RemindDate = remindDate,
-                PlanStartDate = remindDate,
-                PlanEndDate = firstPlan.NextMaintenanceDate,
-                ExecutorIds = string.Join(",", executorIds),
-                ExecutorNames = string.Join(",", executorNames),
-                Status = TASK_STATUS_PLAN
-            };
-
-            var groupId = await _taskGroupRepository.InsertAndGetIdAsync(group);
-            return group;
-        }
-
 
         #endregion
 
         #region 工单执行
+
         /// <summary>
-        /// 开始执行工单（接单）
+        /// 开始执行工单
         /// </summary>
         public async Task<CommonResult> StartTask(Guid taskId)
         {
@@ -792,7 +701,7 @@ namespace DeviceManagementSystem.Maintenances
                     return CommonResult.Error("工单不存在");
                 }
 
-                if (task.Status != TASK_STATUS_PENDING && task.Status != TASK_STATUS_PLAN)
+                if (task.Status != TASK_STATUS_PENDING && task.Status != TASK_STATUS_PLAN && task.Status != TASK_STATUS_DELEGATED)
                 {
                     return CommonResult.Error($"当前状态({task.Status})不可开始");
                 }
@@ -801,18 +710,6 @@ namespace DeviceManagementSystem.Maintenances
                 task.ActualStartTime = DateTime.Now;
 
                 await _taskRepository.UpdateAsync(task);
-
-                // 如果属于组任务，更新组状态
-                if (task.GroupId.HasValue)
-                {
-                    var group = await _taskGroupRepository.FirstOrDefaultAsync(task.GroupId.Value);
-                    if (group != null && group.Status != TASK_STATUS_EXECUTING)
-                    {
-                        group.Status = TASK_STATUS_EXECUTING;
-                        await _taskGroupRepository.UpdateAsync(group);
-                    }
-                }
-
                 await CurrentUnitOfWork.SaveChangesAsync();
 
                 return CommonResult.Ok("开始执行");
@@ -824,10 +721,8 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
-
-
         /// <summary>
-        /// 保存工单执行进度（保持执行中状态）
+        /// 保存工单执行进度
         /// </summary>
         [UnitOfWork]
         public async Task<CommonResult> SaveTaskExecution(SaveMaintenanceTaskExecutionInput input)
@@ -845,13 +740,10 @@ namespace DeviceManagementSystem.Maintenances
                     return CommonResult.Error($"当前状态({task.Status})不可保存执行进度");
                 }
 
-                // 更新工单信息
                 task.Summary = input.Summary;
                 task.CompletionRemark = input.CompletionRemark;
-
                 await _taskRepository.UpdateAsync(task);
 
-                // 更新项目执行结果
                 if (input.Items != null && input.Items.Any())
                 {
                     foreach (var itemInput in input.Items)
@@ -869,28 +761,17 @@ namespace DeviceManagementSystem.Maintenances
                     }
                 }
 
-                // 保存附件关系
                 if (input.AttachmentIds != null && input.AttachmentIds.Any())
                 {
-                    await _attachmentAppService.SetBusinessAttachments(new Attachment.Dto.SetBusinessAttachmentInput
+                    await _attachmentAppService.SetBusinessAttachments(new SetBusinessAttachmentInput
                     {
                         BusinessId = input.TaskId,
                         BusinessType = "MaintenanceTask",
                         AttachmentIds = input.AttachmentIds
                     });
                 }
-                else
-                {
-                    await _attachmentAppService.SetBusinessAttachments(new Attachment.Dto.SetBusinessAttachmentInput
-                    {
-                        BusinessId = input.TaskId,
-                        BusinessType = "MaintenanceTask",
-                        AttachmentIds = new List<Guid>() // 清空附件关系
-                    });
-                }
 
                 await CurrentUnitOfWork.SaveChangesAsync();
-
                 return CommonResult.Ok("保存成功");
             }
             catch (Exception ex)
@@ -900,10 +781,8 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
-
-
         /// <summary>
-        /// 完成保养工单（带结束时间）
+        /// 完成保养工单
         /// </summary>
         [UnitOfWork]
         public async Task<CommonResult> CompleteTask(CompleteMaintenanceTaskInput input)
@@ -921,15 +800,12 @@ namespace DeviceManagementSystem.Maintenances
                     return CommonResult.Error($"当前状态({task.Status})不可完成");
                 }
 
-                // 更新工单
                 task.Status = TASK_STATUS_COMPLETED;
                 task.ActualEndTime = input.EndTime ?? DateTime.Now;
                 task.Summary = input.Summary;
                 task.CompletionRemark = input.CompletionRemark;
-
                 await _taskRepository.UpdateAsync(task);
 
-                // 更新项目执行结果
                 if (input.Items != null && input.Items.Any())
                 {
                     foreach (var itemInput in input.Items)
@@ -947,51 +823,36 @@ namespace DeviceManagementSystem.Maintenances
                     }
                 }
 
-                // 保存附件关系
                 if (input.AttachmentIds != null && input.AttachmentIds.Any())
                 {
-                    await _attachmentAppService.SetBusinessAttachments(new Attachment.Dto.SetBusinessAttachmentInput
+                    await _attachmentAppService.SetBusinessAttachments(new SetBusinessAttachmentInput
                     {
                         BusinessId = input.TaskId,
                         BusinessType = "MaintenanceTask",
                         AttachmentIds = input.AttachmentIds
                     });
                 }
-                else
+
+                if (task.IsMergedTask && !string.IsNullOrEmpty(task.MergedPlanIds))
                 {
-                    await _attachmentAppService.SetBusinessAttachments(new Attachment.Dto.SetBusinessAttachmentInput
+                    var planIds = task.MergedPlanIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(id => Guid.Parse(id)).ToList();
+
+                    foreach (var planId in planIds)
                     {
-                        BusinessId = input.TaskId,
-                        BusinessType = "MaintenanceTask",
-                        AttachmentIds = new List<Guid>() // 清空附件关系
-                    });
-                }
-
-                // 记录保养完成，更新下次保养日期
-                var plan = await _planRepository.FirstOrDefaultAsync(task.PlanId);
-                if (plan != null)
-                {
-                    var planService = IocManager.Instance.Resolve<IMaintenancePlanAppService>();
-                    await planService.RecordMaintenanceCompleted(plan.Id, task.ActualEndTime.Value);
-                }
-
-                // 检查是否同一组的所有工单都已完成
-                if (task.GroupId.HasValue)
-                {
-                    var groupTasks = await _taskRepository.GetAll()
-                        .Where(x => x.GroupId == task.GroupId.Value)
-                        .ToListAsync();
-
-                    if (groupTasks.All(x => x.Status == TASK_STATUS_COMPLETED))
-                    {
-                        var group = await _taskGroupRepository.GetAsync(task.GroupId.Value);
-                        group.Status = TASK_STATUS_COMPLETED;
-                        await _taskGroupRepository.UpdateAsync(group);
+                        var plan = await _planRepository.FirstOrDefaultAsync(planId);
+                        if (plan != null)
+                        {
+                            await RecordMaintenanceCompleted(plan.Id, task.ActualEndTime.Value);
+                        }
                     }
+                }
+                else if (task.PlanId != Guid.Empty)
+                {
+                    await RecordMaintenanceCompleted(task.PlanId, task.ActualEndTime.Value);
                 }
 
                 await CurrentUnitOfWork.SaveChangesAsync();
-
                 return CommonResult.Ok("完成保养");
             }
             catch (Exception ex)
@@ -1001,109 +862,9 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
-
-
-        /// <summary>
-        /// 执行保养工单
-        /// </summary>
-        [UnitOfWork]
-        public async Task<CommonResult> ExecuteTask(ExecuteMaintenanceTaskInput input)
-        {
-            try
-            {
-                var task = await _taskRepository.FirstOrDefaultAsync(input.TaskId);
-                if (task == null)
-                {
-                    return CommonResult.Error("工单不存在");
-                }
-
-                if (task.Status != TASK_STATUS_EXECUTING && task.Status != TASK_STATUS_PENDING)
-                {
-                    return CommonResult.Error($"当前状态({task.Status})不可执行");
-                }
-
-                // 更新工单
-                task.Status = TASK_STATUS_COMPLETED;
-                task.ActualEndTime = DateTime.Now;
-                task.Summary = input.Summary;
-                task.CompletionRemark = input.CompletionRemark;
-
-                await _taskRepository.UpdateAsync(task);
-
-                // 更新项目执行结果
-                if (input.Items != null && input.Items.Any())
-                {
-                    foreach (var itemInput in input.Items)
-                    {
-                        var taskItem = await _taskItemRepository.FirstOrDefaultAsync(x => x.TaskId == input.TaskId && x.ItemId == itemInput.ItemId);
-                        if (taskItem != null)
-                        {
-                            taskItem.Result = itemInput.Result;
-                            taskItem.ActualValue = itemInput.ActualValue;
-                            taskItem.Remark = itemInput.Remark;
-                            await _taskItemRepository.UpdateAsync(taskItem);
-                        }
-                    }
-                }
-
-                // 保存附件关系
-                if (input.AttachmentIds != null && input.AttachmentIds.Any())
-                {
-                    await _attachmentAppService.SetBusinessAttachments(new Attachment.Dto.SetBusinessAttachmentInput
-                    {
-                        BusinessId = input.TaskId,
-                        BusinessType = "MaintenanceTask",
-                        AttachmentIds = input.AttachmentIds
-                    });
-                }
-                else
-                {
-                    await _attachmentAppService.SetBusinessAttachments(new Attachment.Dto.SetBusinessAttachmentInput
-                    {
-                        BusinessId = input.TaskId,
-                        BusinessType = "MaintenanceTask",   
-                        AttachmentIds = new List<Guid>() // 清空附件关系
-                    });
-                }
-
-                // 记录保养完成，更新下次保养日期
-                var plan = await _planRepository.FirstOrDefaultAsync(task.PlanId);
-                if (plan != null)
-                {
-                    var planService = IocManager.Instance.Resolve<IMaintenancePlanAppService>();
-                    await planService.RecordMaintenanceCompleted(plan.Id, task.ActualEndTime);
-                }
-
-                // 检查是否同一组的所有工单都已完成
-                if (task.GroupId.HasValue)
-                {
-                    var groupTasks = await _taskRepository.GetAll()
-                        .Where(x => x.GroupId == task.GroupId.Value)
-                        .ToListAsync();
-
-                    if (groupTasks.All(x => x.Status == TASK_STATUS_COMPLETED))
-                    {
-                        var group = await _taskGroupRepository.GetAsync(task.GroupId.Value);
-                        group.Status = TASK_STATUS_COMPLETED;
-                        await _taskGroupRepository.UpdateAsync(group);
-                    }
-                }
-
-                await CurrentUnitOfWork.SaveChangesAsync();
-
-                return CommonResult.Ok("执行成功");
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("执行保养工单失败", ex);
-                return CommonResult.Error($"执行保养工单失败: {ex.Message}");
-            }
-        }
-
         /// <summary>
         /// 委派工单
         /// </summary>
-        [UnitOfWork]
         public async Task<CommonResult> DelegateTask(DelegateMaintenanceTaskInput input)
         {
             try
@@ -1119,10 +880,8 @@ namespace DeviceManagementSystem.Maintenances
                     return CommonResult.Error($"当前状态({task.Status})不可委派");
                 }
 
-                // 保存原执行人
-                task.OriginalExecutorIds = task.ExecutorIds;
+                task.OriginalExecutorIds = task.ExecutorNames;
 
-                // 获取新执行人姓名
                 var newExecutorNames = new List<string>();
                 foreach (var userId in input.NewExecutorIds)
                 {
@@ -1130,7 +889,6 @@ namespace DeviceManagementSystem.Maintenances
                     newExecutorNames.Add(userName);
                 }
 
-                // 更新执行人
                 task.ExecutorIds = string.Join(",", input.NewExecutorIds);
                 task.ExecutorNames = string.Join(",", newExecutorNames);
                 task.DelegatorId = AbpSession.UserId;
@@ -1139,42 +897,6 @@ namespace DeviceManagementSystem.Maintenances
                 task.Status = TASK_STATUS_DELEGATED;
 
                 await _taskRepository.UpdateAsync(task);
-
-                // 如果属于组任务，更新组的执行人
-                if (task.GroupId.HasValue)
-                {
-                    var group = await _taskGroupRepository.FirstOrDefaultAsync(task.GroupId.Value);
-                    if (group != null)
-                    {
-                        var groupTasks = await _taskRepository.GetAll()
-                            .Where(x => x.GroupId == task.GroupId.Value)
-                            .ToListAsync();
-
-                        var allExecutorIds = new HashSet<long>();
-                        var allExecutorNames = new HashSet<string>();
-
-                        foreach (var t in groupTasks)
-                        {
-                            var ids = t.ExecutorIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                                .Select(x => long.Parse(x));
-                            foreach (var id in ids)
-                            {
-                                allExecutorIds.Add(id);
-                            }
-
-                            var names = t.ExecutorNames.Split(',', StringSplitOptions.RemoveEmptyEntries);
-                            foreach (var name in names)
-                            {
-                                allExecutorNames.Add(name);
-                            }
-                        }
-
-                        group.ExecutorIds = string.Join(",", allExecutorIds);
-                        group.ExecutorNames = string.Join(",", allExecutorNames);
-                        await _taskGroupRepository.UpdateAsync(group);
-                    }
-                }
-
                 await CurrentUnitOfWork.SaveChangesAsync();
 
                 return CommonResult.Ok("委派成功");
@@ -1208,6 +930,7 @@ namespace DeviceManagementSystem.Maintenances
                 task.CompletionRemark = reason;
 
                 await _taskRepository.UpdateAsync(task);
+                await CurrentUnitOfWork.SaveChangesAsync();
 
                 return CommonResult.Ok("取消成功");
             }
@@ -1218,13 +941,12 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
-
         #endregion
 
         #region 提醒功能
 
         /// <summary>
-        /// 发送提醒（定时任务调用）
+        /// 发送提醒（包含邮件提醒）
         /// </summary>
         public async Task<CommonResult<int>> SendReminders()
         {
@@ -1236,31 +958,38 @@ namespace DeviceManagementSystem.Maintenances
                     return CommonResult<int>.Success("没有需要提醒的任务", 0);
                 }
 
-                var groups = remindResult.Data;
+                var tasks = remindResult.Data;
                 int remindCount = 0;
+                var tasksByExecutor = new Dictionary<long, List<PendingRemindTaskDto>>();
 
-                foreach (var group in groups)
+                foreach (var task in tasks)
                 {
-                    Logger.Info($"发送提醒: {group.GroupName}, 包含 {group.Tasks.Count} 个工单");
+                    var taskEntity = await _taskRepository.GetAsync(task.TaskId);
+                    taskEntity.IsReminded = true;
+                    taskEntity.Status = TASK_STATUS_PENDING;
+                    await _taskRepository.UpdateAsync(taskEntity);
+                    remindCount++;
 
-                    foreach (var task in group.Tasks)
+                    if (!string.IsNullOrEmpty(taskEntity.ExecutorIds))
                     {
-                        var taskEntity = await _taskRepository.GetAsync(task.Id);
-                        taskEntity.IsReminded = true;
-                        taskEntity.Status = TASK_STATUS_PENDING;
-                        await _taskRepository.UpdateAsync(taskEntity);
-                        remindCount++;
-                    }
+                        var executorIds = taskEntity.ExecutorIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                            .Select(x => long.Parse(x)).ToList();
 
-                    if (group.GroupId.HasValue && group.GroupId.Value != Guid.Empty)
-                    {
-                        var groupEntity = await _taskGroupRepository.GetAsync(group.GroupId.Value);
-                        groupEntity.Status = TASK_STATUS_PENDING;
-                        await _taskGroupRepository.UpdateAsync(groupEntity);
+                        foreach (var executorId in executorIds)
+                        {
+                            if (!tasksByExecutor.ContainsKey(executorId))
+                            {
+                                tasksByExecutor[executorId] = new List<PendingRemindTaskDto>();
+                            }
+                            tasksByExecutor[executorId].Add(task);
+                        }
                     }
                 }
 
                 await CurrentUnitOfWork.SaveChangesAsync();
+
+                // 发送邮件提醒（异步，不阻塞主流程）
+                await  SendReminderEmails(tasksByExecutor);
 
                 return CommonResult<int>.Success($"成功发送 {remindCount} 个提醒", remindCount);
             }
@@ -1271,13 +1000,445 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
+        /// <summary>
+        /// 发生提醒邮件
+        /// </summary>
+        /// <param name="tasksByExecutor"></param>
+        /// <returns></returns>
+        private async Task SendReminderEmails(Dictionary<long, List<PendingRemindTaskDto>> tasksByExecutor)
+        {
+            try
+            {
+                foreach (var kvp in tasksByExecutor)
+                {
+                    var executorId = kvp.Key;
+                    var executorTasks = kvp.Value;
+                    var executorEmail = await GetUserEmail(executorId);
+
+                    if (string.IsNullOrEmpty(executorEmail)) continue;
+
+                    var emailContent = BuildReminderEmailContent(executorTasks, executorId);
+                    var emailRequest = new EmailRequest
+                    {
+                        Subject = $"【待办提醒】您有 {executorTasks.Count} 个保养工单待执行",
+                        Body = emailContent,
+                        MailTo = new List<string> { executorEmail }
+                    };
+
+                    await _emailAppService.SendEmailAsync(emailRequest);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("发送提醒邮件失败", ex);
+            }
+        }
+
+        /// <summary>
+        /// 建立邮件内容
+        /// </summary>
+        /// <param name="tasks"></param>
+        /// <param name="executorId"></param>
+        /// <returns></returns>
+        private string BuildReminderEmailContent(List<PendingRemindTaskDto> tasks, long executorId)
+        {
+            var strBuilder = new StringBuilder();
+            strBuilder.AppendLine("<!DOCTYPE html>");
+            strBuilder.AppendLine("<html>");
+            strBuilder.AppendLine("<body>");
+            strBuilder.AppendLine($"<h2>您有 {tasks.Count} 个保养工单待执行</h2>");
+            strBuilder.AppendLine("<table border='1' style='border-collapse: collapse; width: 100%;'>");
+            strBuilder.AppendLine("<tr><th>工单编号</th><th>工单名称</th><th>设备名称</th><th>保养等级</th><th>计划开始</th><th>计划完成</th></tr>");
+
+            foreach (var task in tasks)
+            {
+                strBuilder.AppendLine("<tr>");
+                strBuilder.AppendLine($"<td>{task.TaskNo}</td>");
+                strBuilder.AppendLine($"<td>{task.TaskName}</td>");
+                strBuilder.AppendLine($"<td>{task.DeviceName}</td>");
+                strBuilder.AppendLine($"<td>{task.MaintenanceLevel}</td>");
+                strBuilder.AppendLine($"<td>{task.PlanStartDate:yyyy-MM-dd}</td>");
+                strBuilder.AppendLine($"<td>{task.PlanEndDate:yyyy-MM-dd}</td>");
+                strBuilder.AppendLine("</tr>");
+            }
+
+            strBuilder.AppendLine("</table>");
+            strBuilder.AppendLine("</body>");
+            strBuilder.AppendLine("</html>");
+
+            return strBuilder.ToString();
+        }
+
         #endregion
+
+
+        #region 统计分析
+
+        /// <summary>
+        /// 获取保养统计看板数据（使用联表查询）
+        /// </summary>
+        public async Task<CommonResult<MaintenanceStatisticsDto>> GetMaintenanceStatistics([FromQuery] MaintenanceStatisticsInput input)
+        {
+            try
+            {
+                var today = DateTime.Today;
+                var monthStart = new DateTime(today.Year, today.Month, 1);
+                var monthEnd = monthStart.AddMonths(1).AddDays(-1);
+
+                // 使用联表查询：工单 -> 设备 -> 模板 -> 设备类型
+                var query = from t in _taskRepository.GetAll().AsNoTracking()
+                            join d in _deviceRepository.GetAll().AsNoTracking() on t.DeviceId equals d.Id into deviceJoin
+                            from d in deviceJoin.DefaultIfEmpty()
+                            join tm in _templateRepository.GetAll().AsNoTracking() on t.TemplateId equals tm.Id into templateJoin
+                            from tm in templateJoin.DefaultIfEmpty()
+                            join dt in _typeRepository.GetAll().AsNoTracking() on tm.DeviceTypeId equals dt.Id into typeJoin
+                            from dt in typeJoin.DefaultIfEmpty()
+                            select new
+                            {
+                                Task = t,
+                                Device = d,
+                                Template = tm,
+                                DeviceType = dt
+                            };
+
+                // 应用设备名称筛选
+                if (!string.IsNullOrWhiteSpace(input.DeviceName))
+                {
+                    var keywords = input.DeviceName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var keyword in keywords)
+                    {
+                        query = query.Where(x => x.Device != null && x.Device.DeviceName != null && x.Device.DeviceName.Contains(keyword));
+                    }
+                }
+
+                // 应用设备编码筛选
+                if (!string.IsNullOrWhiteSpace(input.DeviceCode))
+                {
+                    query = query.Where(x => x.Device != null && x.Device.DeviceCode != null && x.Device.DeviceCode.Contains(input.DeviceCode));
+                }
+
+                // 应用设备类型筛选
+                if (input.DeviceTypeIds != null && input.DeviceTypeIds.Any())
+                {
+                    query = query.Where(x => x.Template != null && 
+                                            input.DeviceTypeIds.Contains(x.Template.DeviceTypeId));
+                }
+
+                // 应用保养等级筛选
+                if (input.MaintenanceLevels != null && input.MaintenanceLevels.Any())
+                {
+                    query = query.Where(x => x.Task != null && x.Task.MaintenanceLevel != null &&
+                                            input.MaintenanceLevels.Contains(x.Task.MaintenanceLevel));
+                }
+
+                // 应用保养频次筛选
+                if (input.MaintenanceFrequencies != null && input.MaintenanceFrequencies.Any())
+                {
+                    query = query.Where(x => x.Task != null && x.Task.MaintenanceLevel != null &&
+                                            input.MaintenanceFrequencies.Contains(GetMaintenanceFrequency(x.Task.MaintenanceLevel)));
+                }
+
+                // 应用日期筛选
+                if (input.StartDate.HasValue)
+                {
+                    query = query.Where(x => x.Task.PlanEndDate >= input.StartDate.Value);
+                }
+
+                if (input.EndDate.HasValue)
+                {
+                    var endDate = input.EndDate.Value.AddDays(1).AddSeconds(-1);
+                    query = query.Where(x => x.Task.PlanEndDate <= endDate);
+                }
+
+                var allData = await query.ToListAsync();
+
+                // 获取设备类型选项（修复空引用问题）
+                var deviceTypeOptions = new List<DeviceTypeOptionDto>();
+                try
+                {
+                    deviceTypeOptions = await _typeRepository.GetAll().AsNoTracking()
+                        .Select(x => new DeviceTypeOptionDto
+                        {
+                            Id = x.Id,
+                            TypeName = x.TypeName ?? "未分类"
+                        })
+                        .ToListAsync();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("获取设备类型选项失败", ex);
+                }
+
+                // 获取设备编码选项
+                var deviceCodeOptions = new List<string>();
+                try
+                {
+                    deviceCodeOptions = await _deviceRepository.GetAll()
+                        .Select(x => x.DeviceCode)
+                        .Where(x => x != null && !string.IsNullOrEmpty(x))
+                        .Distinct()
+                        .ToListAsync();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("获取设备编码选项失败", ex);
+                }
+
+                // 1. 今日待完成任务
+                var todayPending = allData.Where(x =>
+                    x.Task != null &&
+                    x.Task.PlanEndDate.Date == today &&
+                    x.Task.Status != TASK_STATUS_COMPLETED).ToList();
+
+                // 2. 今日已完成任务
+                var todayCompleted = allData.Where(x =>
+                    x.Task != null &&
+                    x.Task.ActualEndTime.HasValue &&
+                    x.Task.ActualEndTime.Value.Date == today &&
+                    x.Task.Status == TASK_STATUS_COMPLETED).ToList();
+
+                // 3. 本月已完成任务
+                var monthCompleted = allData.Where(x =>
+                    x.Task != null &&
+                    x.Task.ActualEndTime.HasValue &&
+                    x.Task.ActualEndTime.Value >= monthStart &&
+                    x.Task.ActualEndTime.Value <= monthEnd &&
+                    x.Task.Status == TASK_STATUS_COMPLETED).ToList();
+
+                // 4. 本月未完成任务
+                var monthPending = allData.Where(x =>
+                    x.Task != null &&
+                    x.Task.PlanEndDate >= monthStart &&
+                    x.Task.PlanEndDate <= monthEnd &&
+                    x.Task.Status != TASK_STATUS_COMPLETED).ToList();
+
+                // 5. 本月待完成任务等级分布
+                var monthLevelDistribution = monthPending
+                    .Where(x => x.Task != null && !string.IsNullOrEmpty(x.Task.MaintenanceLevel))
+                    .GroupBy(x => x.Task.MaintenanceLevel)
+                    .Select(g => new LevelDistributionDto
+                    {
+                        Level = g.Key ?? "未分类",
+                        Count = g.Count()
+                    })
+                    .OrderByDescending(x => x.Count)
+                    .ToList();
+
+                // 6. 保养完成率分析（按设备+月份统计）
+                var completionRates = new List<CompletionRateDto>();
+                var deviceGroups = allData.Where(x => x.Device != null).GroupBy(x => x.Device.Id);
+
+                foreach (var deviceGroup in deviceGroups)
+                {
+                    var device = deviceGroup.FirstOrDefault()?.Device;
+                    if (device == null) continue;
+
+                    var deviceType = deviceGroup.FirstOrDefault()?.DeviceType;
+                    var months = deviceGroup
+                        .Where(x => x.Task != null)
+                        .Select(x => x.Task.PlanEndDate.ToString("yyyy-MM"))
+                        .Distinct()
+                        .OrderByDescending(m => m)
+                        .Take(12);
+
+                    foreach (var month in months)
+                    {
+                        var monthTasks = deviceGroup.Where(x => x.Task != null && x.Task.PlanEndDate.ToString("yyyy-MM") == month).ToList();
+                        if (!monthTasks.Any()) continue;
+
+                        var totalCount = monthTasks.Count;
+                        var completedCount = monthTasks.Count(x => x.Task.Status == TASK_STATUS_COMPLETED);
+
+                        // 获取该设备的保养等级分布（取最常见的等级）
+                        var commonLevel = monthTasks
+                            .Where(x => !string.IsNullOrEmpty(x.Task.MaintenanceLevel))
+                            .GroupBy(x => x.Task.MaintenanceLevel)
+                            .OrderByDescending(g => g.Count())
+                            .FirstOrDefault()?.Key ?? "日常保养";
+
+                        completionRates.Add(new CompletionRateDto
+                        {
+                            DeviceName = device.DeviceName ?? "未知设备",
+                            DeviceCode = device.DeviceCode ?? "未知编码",
+                            DeviceTypeName = deviceType?.TypeName ?? "未分类",
+                            MaintenanceLevel = commonLevel,
+                            MaintenanceFrequency = GetMaintenanceFrequency(commonLevel),
+                            StatisticsDate = DateTime.ParseExact(month, "yyyy-MM", null),
+                            TotalCount = totalCount,
+                            CompletedCount = completedCount,
+                            CompletionRate = totalCount > 0 ? Math.Round((decimal)completedCount / totalCount * 100, 2) : 0
+                        });
+                    }
+                }
+
+                // 7. 保养次数统计（按设备分组）
+                var maintenanceCounts = allData
+                    .Where(x => x.Device != null && !string.IsNullOrEmpty(x.Device.DeviceName))
+                    .GroupBy(x => x.Device.Id)
+                    .Select(g => new DeviceMaintenanceCountDto
+                    {
+                        DeviceName = g.FirstOrDefault()?.Device?.DeviceName ?? "未知设备",
+                        DeviceCode = g.FirstOrDefault()?.Device?.DeviceCode ?? "未知编码",
+                        DeviceTypeName = g.FirstOrDefault()?.DeviceType?.TypeName ?? "未分类",
+                        TotalCount = g.Count()
+                    })
+                    .OrderByDescending(x => x.TotalCount)
+                    .Take(10)
+                    .ToList();
+
+                // 8. 保养次数时间趋势（按月统计）
+                var maintenanceTrends = allData
+                    .Where(x => x.Device != null && !string.IsNullOrEmpty(x.Device.DeviceName) && x.Task != null)
+                    .GroupBy(x => new {
+                        DeviceName = x.Device.DeviceName,
+                        Month = x.Task.PlanEndDate.ToString("yyyy-MM")
+                    })
+                    .Select(g => new MaintenanceTrendDto
+                    {
+                        Month = DateTime.ParseExact(g.Key.Month, "yyyy-MM", null),
+                        DeviceName = g.Key.DeviceName ?? "未知设备",
+                        Count = g.Count()
+                    })
+                    .OrderBy(t => t.Month)
+                    .ThenBy(t => t.DeviceName)
+                    .ToList();
+
+                // 9. 已完成保养次数与等级分布
+                var completedDistributions = allData
+                    .Where(x => x.Device != null && !string.IsNullOrEmpty(x.Device.DeviceName) && x.Task != null)
+                    .GroupBy(x => new {
+                        DeviceId = x.Device.Id,
+                        DeviceName = x.Device.DeviceName,
+                        DeviceCode = x.Device.DeviceCode,
+                        DeviceTypeName = x.DeviceType != null ? x.DeviceType.TypeName : "未分类",
+                        MaintenanceLevel = x.Task.MaintenanceLevel ?? "未分类"
+                    })
+                    .Select(g => new CompletedMaintenanceDistributionDto
+                    {
+                        DeviceName = g.Key.DeviceName ?? "未知设备",
+                        DeviceCode = g.Key.DeviceCode ?? "未知编码",
+                        DeviceTypeName = g.Key.DeviceTypeName,
+                        MaintenanceLevel = g.Key.MaintenanceLevel,
+                        MaintenanceFrequency = GetMaintenanceFrequency(g.Key.MaintenanceLevel),
+                        TotalCount = g.Count(),
+                        CompletedCount = g.Count(x => x.Task.Status == TASK_STATUS_COMPLETED),
+                        PendingCount = g.Count(x => x.Task.Status != TASK_STATUS_COMPLETED)
+                    })
+                    .OrderBy(x => x.DeviceName)
+                    .ThenBy(x => x.MaintenanceLevel)
+                    .ToList();
+
+                // 10. 保养记录明细（分页）
+                var records = allData
+                    .Where(x => x.Task != null && x.Device != null)
+                    .OrderByDescending(x => x.Task.PlanEndDate)
+                    .Take(20)
+                    .Select(x => new MaintenanceRecordDto
+                    {
+                        Id = x.Task.Id,
+                        TaskNo = x.Task.TaskNo ?? "未知",
+                        DeviceCode = x.Device?.DeviceCode ?? "未知",
+                        DeviceName = x.Device?.DeviceName ?? "未知设备",
+                        DeviceTypeName = x.DeviceType?.TypeName ?? "未分类",
+                        MaintenanceResult = x.Task.Status == TASK_STATUS_COMPLETED ? "已完成" : "未完成",
+                        MaintenanceTime = x.Task.ActualEndTime ?? x.Task.PlanEndDate,
+                        ExecutorName = x.Task.ExecutorNames ?? "未知",
+                        MaintenanceLevel = x.Task.MaintenanceLevel ?? "未分类",
+                        DeviceStatus = x.Task.Status == TASK_STATUS_COMPLETED ? "正常" : "待保养"
+                    })
+                    .ToList();
+
+                var result = new MaintenanceStatisticsDto
+                {
+                    TodayPendingCount = todayPending.Count,
+                    TodayCompletedCount = todayCompleted.Count,
+                    MonthCompletedCount = monthCompleted.Count,
+                    MonthPendingCount = monthPending.Count,
+                    MonthLevelDistribution = monthLevelDistribution,
+                    CompletionRates = completionRates,
+                    MaintenanceCounts = maintenanceCounts,
+                    MaintenanceTrends = maintenanceTrends,
+                    CompletedDistributions = completedDistributions,
+                    Records = records,
+                    TotalRecords = allData.Count,
+                    DeviceTypeOptions = deviceTypeOptions,
+                    DeviceCodeOptions = deviceCodeOptions
+                };
+
+                return CommonResult<MaintenanceStatisticsDto>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"获取保养统计看板数据失败: {ex.Message}", ex);
+                Logger.Error($"异常堆栈: {ex.StackTrace}");
+                return CommonResult<MaintenanceStatisticsDto>.Error($"获取保养统计看板数据失败: {ex.Message}");
+            }
+        }
+
+
+        /// <summary>
+        /// 获取保养频次文本
+        /// </summary>
+        private string GetMaintenanceFrequency(string level)
+        {
+            return level switch
+            {
+                "日常保养" => "每天一次",
+                "月度" => "每月一次",
+                "季度" => "每季度一次",
+                "半年度" => "每半年一次",
+                "年度" => "每年一次",
+                _ => level
+            };
+        }
+        #endregion
+
+
 
         #region 辅助方法
 
-        /// <summary>
-        /// 获取设备保养人员
-        /// </summary>
+        private async Task RecordMaintenanceCompleted(Guid planId, DateTime actualDate)
+        {
+            var plan = await _planRepository.FirstOrDefaultAsync(planId);
+            if (plan == null) return;
+
+            plan.LastMaintenanceDate = actualDate;
+            plan.NextMaintenanceDate = CalculateNextMaintenanceDate(actualDate, plan.MaintenanceLevel);
+            plan.HasGeneratedTask = false;
+            await _planRepository.UpdateAsync(plan);
+        }
+
+        private DateTime CalculateNextMaintenanceDate(DateTime lastDate, string level)
+        {
+            int days = MaintenanceCycleConstants.GetCycleDays(level);
+            DateTime today = DateTime.Today;
+
+            DateTime nextDate;
+
+            if (lastDate < today)
+            {
+                int daysPassed = (today - lastDate).Days;
+                int cyclesNeeded = (int)Math.Ceiling((double)daysPassed / days);
+                cyclesNeeded = Math.Max(1, cyclesNeeded);
+                nextDate = lastDate.AddDays(days * cyclesNeeded);
+                while (nextDate <= today)
+                {
+                    nextDate = nextDate.AddDays(days);
+                }
+            }
+            else
+            {
+                nextDate = lastDate.AddDays(days);
+            }
+
+            while (!WorkdayHelper.IsWorkday(nextDate))
+            {
+                nextDate = nextDate.AddDays(1);
+            }
+
+            return nextDate;
+        }
+
         private async Task<List<long>> GetDeviceMaintainers(Guid deviceId)
         {
             return await _deviceUserRelationRepository.GetAll()
@@ -1286,9 +1447,6 @@ namespace DeviceManagementSystem.Maintenances
                 .ToListAsync();
         }
 
-        /// <summary>
-        /// 获取用户名称
-        /// </summary>
         private async Task<List<string>> GetUserNames(List<long> userIds)
         {
             var names = new List<string>();
@@ -1300,9 +1458,19 @@ namespace DeviceManagementSystem.Maintenances
             return names;
         }
 
-        /// <summary>
-        /// 映射为DTO
-        /// </summary>
+        private async Task<string> GetUserEmail(long userId)
+        {
+            try
+            {
+                var user = await _userAppService.GetByIdAsync(new Abp.Application.Services.Dto.EntityDto<long>(userId));
+                return user.Data.EmailAddress;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private async Task<MaintenanceTaskDto> MapToDto(MaintenanceTasks task, Devices device, MaintenanceTemplates template)
         {
             var dto = new MaintenanceTaskDto
@@ -1310,7 +1478,6 @@ namespace DeviceManagementSystem.Maintenances
                 Id = task.Id,
                 TaskNo = task.TaskNo,
                 TaskName = task.TaskName,
-                GroupId = task.GroupId,
                 DeviceId = task.DeviceId,
                 DeviceCode = device?.DeviceCode,
                 DeviceName = device?.DeviceName,
@@ -1320,7 +1487,6 @@ namespace DeviceManagementSystem.Maintenances
                 TemplateId = task.TemplateId,
                 TemplateName = template?.TemplateName,
                 MaintenanceLevel = task.MaintenanceLevel,
-                MaintenanceLevelText = GetMaintenanceLevelText(task.MaintenanceLevel),
                 Status = task.Status,
                 PlanStartDate = task.PlanStartDate,
                 PlanEndDate = task.PlanEndDate,
@@ -1333,10 +1499,13 @@ namespace DeviceManagementSystem.Maintenances
                 OriginalExecutorIds = task.OriginalExecutorIds,
                 DelegatorId = task.DelegatorId,
                 DelegatorName = task.DelegatorName,
-                DelegateReason = task.DelegateReason
+                DelegateReason = task.DelegateReason,
+                IsMergedTask = task.IsMergedTask,
+                MergedPlanIds = task.MergedPlanIds,
+                RemainingDays = (task.PlanEndDate - DateTime.Today).Days,
+                IsOverdue = task.PlanEndDate < DateTime.Today && task.Status != TASK_STATUS_COMPLETED
             };
 
-            // 解析执行人
             if (!string.IsNullOrEmpty(task.ExecutorIds))
             {
                 dto.ExecutorIds = task.ExecutorIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
@@ -1348,20 +1517,9 @@ namespace DeviceManagementSystem.Maintenances
                 dto.ExecutorNames = task.ExecutorNames.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
             }
 
-            // 获取组信息
-            if (task.GroupId.HasValue)
-            {
-                var group = await _taskGroupRepository.FirstOrDefaultAsync(task.GroupId.Value);
-                dto.GroupName = group?.GroupName;
-            }
-
             return dto;
         }
 
-
-        /// <summary>
-        /// 获取设备类型名称
-        /// </summary>
         private async Task<string> GetDeviceTypeName(Guid deviceId)
         {
             var typeRepository = IocManager.Instance.Resolve<IRepository<DeviceTypeRelations, Guid>>();
@@ -1372,21 +1530,6 @@ namespace DeviceManagementSystem.Maintenances
                 return type?.TypeName;
             }
             return null;
-        }
-
-        /// <summary>
-        /// 获取保养等级显示文本
-        /// </summary>
-        private string GetMaintenanceLevelText(string level)
-        {
-            return level switch
-            {
-                "月度" => "月度保养",
-                "季度" => "季度保养",
-                "半年度" => "半年度保养",
-                "年度" => "年度保养",
-                _ => level
-            };
         }
 
         #endregion

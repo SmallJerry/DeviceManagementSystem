@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace DeviceManagementSystem.Maintenances
 {
@@ -711,42 +712,54 @@ namespace DeviceManagementSystem.Maintenances
         }
 
         /// <summary>
-        /// 计算下次保养日期（跳过节假日）
+        /// 计算下次保养日期
         /// </summary>
-        private DateTime CalculateNextMaintenanceDate(DateTime lastDate, string level, bool skipHoliday = true)
+        /// <param name="lastDate">上次保养日期</param>
+        /// <param name="level">保养等级</param>
+        /// <returns>下次保养日期（确保在当前日期之后，且为工作日）</returns>
+        private static DateTime CalculateNextMaintenanceDate(DateTime lastDate, string level)
         {
             int days = MaintenanceCycleConstants.GetCycleDays(level);
-            DateTime nextDate = lastDate.AddDays(days);
+            DateTime today = DateTime.Today;
 
-            if (skipHoliday)
+            DateTime nextDate;
+
+            if (lastDate < today)
             {
-                // 如果是周末或节假日，顺延到下一个工作日
-                while (IsHoliday(nextDate))
+                // 如果上次保养日期早于今天，计算需要多少个周期才能超过今天
+                // 计算从lastDate到today已经过去的天数
+                int daysPassed = (today - lastDate).Days;
+
+                // 计算需要的周期倍数（向上取整）
+                int cyclesNeeded = (int)Math.Ceiling((double)daysPassed / days);
+
+                // 确保至少一个周期
+                cyclesNeeded = Math.Max(1, cyclesNeeded);
+
+                // 计算下次保养日期
+                nextDate = lastDate.AddDays(days * cyclesNeeded);
+
+                // 如果计算出的日期还是今天或之前（由于取整问题），再加一个周期
+                while (nextDate <= today)
                 {
-                    nextDate = nextDate.AddDays(1);
+                    nextDate = nextDate.AddDays(days);
                 }
+            }
+            else
+            {
+                // 如果上次保养日期是今天或未来，正常加一个周期
+                nextDate = lastDate.AddDays(days);
+            }
+
+            // 确保是工作日，如果不是则顺延到下一个工作日
+            while (!WorkdayHelper.IsWorkday(nextDate))
+            {
+                nextDate = nextDate.AddDays(1);
             }
 
             return nextDate;
         }
 
-        /// <summary>
-        /// 判断是否为节假日（调用公共API）
-        /// </summary>
-        private bool IsHoliday(DateTime date)
-        {
-            // 周末判断
-            if (date.DayOfWeek == DayOfWeek.Saturday || date.DayOfWeek == DayOfWeek.Sunday)
-            {
-                return true;
-            }
-
-            // TODO: 调用节假日API判断
-            // 示例：http://timor.tech/api/holiday/info/{date:yyyy-MM-dd}
-            // 如果返回 holiday 不为 null 且 holiday.holiday == true，则是节假日
-
-            return false;
-        }
 
         /// <summary>
         /// 获取保养等级显示文本

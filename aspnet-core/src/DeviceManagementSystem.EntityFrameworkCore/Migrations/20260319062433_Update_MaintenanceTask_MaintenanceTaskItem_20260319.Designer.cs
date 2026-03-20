@@ -4,6 +4,7 @@ using DeviceManagementSystem.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DeviceManagementSystem.Migrations
 {
     [DbContext(typeof(DeviceManagementSystemDbContext))]
-    partial class DeviceManagementSystemDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260319062433_Update_MaintenanceTask_MaintenanceTaskItem_20260319")]
+    partial class Update_MaintenanceTask_MaintenanceTaskItem_20260319
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3158,7 +3161,7 @@ namespace DeviceManagementSystem.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
-                    b.Property<bool>("IsMergedTask")
+                    b.Property<bool?>("IsMergedTask")
                         .HasColumnType("bit");
 
                     b.Property<bool>("IsReminded")

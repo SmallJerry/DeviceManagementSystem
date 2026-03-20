@@ -8,6 +8,7 @@ using DeviceManagementSystem.DeviceInfos.Dto;
 using DeviceManagementSystem.DeviceInfos.Utils;
 using DeviceManagementSystem.FlowManagement;
 using DeviceManagementSystem.Maintenances;
+using DeviceManagementSystem.Maintenances.Constant;
 using DeviceManagementSystem.Maintenances.Dto;
 using DeviceManagementSystem.Users;
 using DeviceManagementSystem.Utils.Common;
@@ -1088,7 +1089,6 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
 
                         await _changeApplyRepository.UpdateAsync(apply);
                         await CurrentUnitOfWork.SaveChangesAsync();
-                        Logger.Info($"更新申请单状态: ApplyId={apply.Id}, 新状态={apply.ApplicationStatus}");
                     }
                 }
                 catch (Exception ex)
@@ -1240,7 +1240,9 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                     }
 
                     // 计算首次保养日期 = 启用日期 + 周期天数
-                    DateTime firstDate = CalculateNextMaintenanceDate((DateTime)data.EnableDate,level);
+                    DateTime firstDate = 
+                        (DateTime)data.EnableDate < DateTime.Today ?
+                        CalculateNextMaintenanceDate(DateTime.Today, level) : CalculateNextMaintenanceDate((DateTime)data.EnableDate, level);
                     DateTime nextDate = firstDate;
 
                     // 创建计划
@@ -1250,8 +1252,8 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                         DeviceId = deviceId,
                         TemplateId = template.Id,
                         MaintenanceLevel = level,
-                        CycleType = GetCycleType(level),
-                        CycleDays = GetCycleDays(level),
+                        CycleType = MaintenanceCycleConstants.GetCycleType(level),
+                        CycleDays = MaintenanceCycleConstants.GetCycleDays(level),
                         FirstMaintenanceDate = firstDate,
                         NextMaintenanceDate = nextDate,
                         Status = "启用",
@@ -1329,9 +1331,10 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
             }
 
            
-            int cycleDays = GetCycleDays(level);
+            int cycleDays = MaintenanceCycleConstants.GetCycleDays(level);
             // 计算首次保养日期
-            DateTime firstDate = CalculateNextMaintenanceDate((DateTime)device.EnableDate,level);
+            DateTime firstDate = (DateTime)device.EnableDate < DateTime.Today ?
+            CalculateNextMaintenanceDate(DateTime.Today, level) : CalculateNextMaintenanceDate((DateTime)device.EnableDate, level);
             DateTime nextDate = firstDate;
 
             // 如果存在旧计划，更新；否则创建新计划
@@ -1360,10 +1363,10 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                     DeviceId = device.Id,
                     TemplateId = template.Id,
                     MaintenanceLevel = level,
-                    CycleType = GetCycleType(level),
+                    CycleType = MaintenanceCycleConstants.GetCycleType(level),
                     CycleDays = cycleDays,
                     FirstMaintenanceDate = firstDate,
-                    NextMaintenanceDate = nextDate,
+                    NextMaintenanceDate = nextDate, 
                     Status = "启用",
                 };
                 var planId = await _maintenancePlanRepository.InsertAndGetIdAsync(plan);
@@ -1413,13 +1416,45 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
         /// <summary>
         /// 计算下次保养日期
         /// </summary>
-        private DateTime CalculateNextMaintenanceDate(DateTime lastDate, string level)
+        /// <param name="lastDate">上次保养日期</param>
+        /// <param name="level">保养等级</param>
+        /// <returns>下次保养日期（确保在当前日期之后，且为工作日）</returns>
+        private static DateTime CalculateNextMaintenanceDate(DateTime lastDate, string level)
         {
-            int days = GetCycleDays(level);
-            DateTime nextDate = lastDate.AddDays(days);
+            int days = MaintenanceCycleConstants.GetCycleDays(level);
+            DateTime today = DateTime.Today;
 
-            // 如果是周末，顺延到下一个工作日
-            while (nextDate.DayOfWeek == DayOfWeek.Saturday || nextDate.DayOfWeek == DayOfWeek.Sunday)
+            DateTime nextDate;
+
+            if (lastDate < today)
+            {
+                // 如果上次保养日期早于今天，计算需要多少个周期才能超过今天
+                // 计算从lastDate到today已经过去的天数
+                int daysPassed = (today - lastDate).Days;
+
+                // 计算需要的周期倍数（向上取整）
+                int cyclesNeeded = (int)Math.Ceiling((double)daysPassed / days);
+
+                // 确保至少一个周期
+                cyclesNeeded = Math.Max(1, cyclesNeeded);
+
+                // 计算下次保养日期
+                nextDate = lastDate.AddDays(days * cyclesNeeded);
+
+                // 如果计算出的日期还是今天或之前（由于取整问题），再加一个周期
+                while (nextDate <= today)
+                {
+                    nextDate = nextDate.AddDays(days);
+                }
+            }
+            else
+            {
+                // 如果上次保养日期是今天或未来，正常加一个周期
+                nextDate = lastDate.AddDays(days);
+            }
+
+            // 确保是工作日，如果不是则顺延到下一个工作日
+            while (!WorkdayHelper.IsWorkday(nextDate))
             {
                 nextDate = nextDate.AddDays(1);
             }
@@ -1427,35 +1462,6 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
             return nextDate;
         }
 
-        /// <summary>
-        /// 获取周期类型
-        /// </summary>
-        private string GetCycleType(string level)
-        {
-            return level switch
-            {
-                "月度" => "按月",
-                "季度" => "按季",
-                "半年度" => "半年",
-                "年度" => "按年",
-                _ => "其他"
-            };
-        }
-
-        /// <summary>
-        /// 获取周期天数
-        /// </summary>
-        private int GetCycleDays(string level)
-        {
-            return level switch
-            {
-                "月度" => 30,
-                "季度" => 90,
-                "半年度" => 180,
-                "年度" => 365,
-                _ => 30
-            };
-        }
 
         #endregion
 

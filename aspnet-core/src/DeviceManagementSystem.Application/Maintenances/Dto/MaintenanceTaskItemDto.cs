@@ -99,26 +99,6 @@ namespace DeviceManagementSystem.Maintenances.Dto
         /// </summary>
         public string Status { get; set; }
 
-        /// <summary>
-        /// 工单状态颜色
-        /// </summary>
-        public string StatusColor
-        {
-            get
-            {
-                return Status switch
-                {
-                    "计划" => "default",
-                    "待执行" => "processing",
-                    "执行中" => "processing",
-                    "已完成" => "success",
-                    "已取消" => "error",
-                    "已委派" => "warning",
-                    _ => "default"
-                };
-            }
-        }
-
 
 
         /// <summary>附件列表</summary>
@@ -203,6 +183,57 @@ namespace DeviceManagementSystem.Maintenances.Dto
         /// 附件列表
         /// </summary>
         public List<Guid> AttachmentIds { get; set; } = new List<Guid>();
+
+
+        /// <summary>
+        /// 是否为合并工单
+        /// </summary>
+        public bool IsMergedTask { get; set; } = false;
+
+        /// <summary>
+        /// 合并的计划ID列表
+        /// </summary>
+        public string MergedPlanIds { get; set; }
+
+
+        /// <summary>
+        /// 剩余天数
+        /// </summary>
+        public int RemainingDays { get; set; }
+
+        /// <summary>
+        /// 是否逾期
+        /// </summary>
+        public bool IsOverdue { get; set; }
+
+        /// <summary>
+        /// 是否可执行
+        /// </summary>
+        public bool CanExecute => Status == "待执行" || Status == "计划";
+
+        /// <summary>
+        /// 是否可委派
+        /// </summary>
+        public bool CanDelegate => Status == "待执行" || Status == "计划";
+
+        /// <summary>
+        /// 是否可取消
+        /// </summary>
+        public bool CanCancel => Status != "已完成" && Status != "已取消";
+
+        /// <summary>
+        /// 获取状态颜色
+        /// </summary>
+        public string StatusColor => Status switch
+        {
+            "计划" => "yellow",
+            "待执行" => "orange",
+            "执行中" => "blue",
+            "已完成" => "green",
+            "已取消" => "red",
+            "逾期" => "red",
+            _ => "default"
+        };
     }
 
     /// <summary>
@@ -281,8 +312,41 @@ namespace DeviceManagementSystem.Maintenances.Dto
                 };
             }
         }
+
+
+
+        /// <summary>
+        /// 来源计划ID
+        /// </summary>
+        public Guid? SourcePlanId { get; set; }
+
+        /// <summary>
+        /// 来源保养等级（前端用于区分显示）
+        /// </summary>
+        public string SourceMaintenanceLevel { get; set; }
     }
 
+
+    /// <summary>
+    /// 待办工单DTO（简化版）
+    /// </summary>
+    public class PendingTaskDto
+    {
+        /// <summary>
+        /// 保养工单
+        /// </summary>
+        public MaintenanceTaskDto Task { get; set; }
+        
+        /// <summary>
+        /// 设备名称
+        /// </summary>
+        public string DeviceName { get; set; }
+
+        /// <summary>
+        /// 计划开始时间
+        /// </summary>
+        public DateTime PlanStartDate { get; set; }
+    }
 
 
     /// <summary>
@@ -448,6 +512,12 @@ namespace DeviceManagementSystem.Maintenances.Dto
         /// 设备ID
         /// </summary>
         public Guid? DeviceId { get; set; }
+
+
+        /// <summary>
+        /// 设备类型ID
+        /// </summary>
+        public Guid? DeviceTypeId { get; set; }
 
         /// <summary>
         /// 保养等级

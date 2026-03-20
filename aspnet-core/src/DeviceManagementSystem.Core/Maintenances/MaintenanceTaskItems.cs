@@ -71,5 +71,17 @@ namespace DeviceManagementSystem.Maintenances
         /// 排序号
         /// </summary>
         public int SortOrder { get; set; }
+
+
+
+        /// <summary>
+        /// 来源计划ID（用于区分项目来自哪个保养计划）
+        /// </summary>
+        public Guid? SourcePlanId { get; set; }
+
+        /// <summary>
+        /// 来源保养等级（月度/季度/半年度/年度）
+        /// </summary>
+        public string SourceMaintenanceLevel { get; set; }
     }
 }

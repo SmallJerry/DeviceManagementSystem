@@ -1,6 +1,6 @@
 ﻿
 using Abp.Application.Services.Dto;
-using DeviceManagementSystem.System;
+using DeviceManagementSystem.Systems;
 using DeviceManagementSystem.SystemConfigs.param;
 using DeviceManagementSystem.Utils.Common;
 using Microsoft.AspNetCore.Mvc;

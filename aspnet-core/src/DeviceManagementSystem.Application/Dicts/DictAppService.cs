@@ -1,7 +1,7 @@
 ﻿using Abp.Auditing;
 using Abp.Domain.Repositories;
 using DeviceManagementSystem.Dicts.param;
-using DeviceManagementSystem.System;
+using DeviceManagementSystem.Systems;
 using DeviceManagementSystem.Utils.Common;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
