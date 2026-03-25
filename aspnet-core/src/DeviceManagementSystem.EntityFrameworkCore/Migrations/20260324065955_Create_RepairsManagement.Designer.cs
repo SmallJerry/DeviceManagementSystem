@@ -4,6 +4,7 @@ using DeviceManagementSystem.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DeviceManagementSystem.Migrations
 {
     [DbContext(typeof(DeviceManagementSystemDbContext))]
-    partial class DeviceManagementSystemDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260324065955_Create_RepairsManagement")]
+    partial class Create_RepairsManagement
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3332,41 +3335,24 @@ namespace DeviceManagementSystem.Migrations
                     b.ToTable("AbpTenants");
                 });
 
-            modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairAcceptances", b =>
+            modelBuilder.Entity("DeviceManagementSystem.Repairs.AcceptanceRecords", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<int>("AcceptanceConclusion")
+                    b.Property<string>("AcceptanceBasis")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int?>("AcceptanceConclusion")
+                        .HasMaxLength(10)
                         .HasColumnType("int");
-
-                    b.Property<string>("AcceptanceCriteriaJson")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<string>("AcceptanceOpinion")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
 
                     b.Property<DateTime>("AcceptanceTime")
                         .HasColumnType("datetime2");
 
                     b.Property<long>("AcceptorId")
-                        .HasMaxLength(20)
                         .HasColumnType("bigint");
-
-                    b.Property<string>("AcceptorName")
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.Property<string>("AfterRepairParams")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<string>("BeforeRepairParams")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
 
                     b.Property<DateTime>("CreationTime")
                         .HasColumnType("datetime2");
@@ -3374,17 +3360,48 @@ namespace DeviceManagementSystem.Migrations
                     b.Property<long?>("CreatorUserId")
                         .HasColumnType("bigint");
 
-                    b.Property<long?>("DeleterUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletionTime")
+                    b.Property<DateTime?>("LastModificationTime")
                         .HasColumnType("datetime2");
 
-                    b.Property<Guid>("DeviceId")
+                    b.Property<long?>("LastModifierUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PostRepairParams")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PreRepairParams")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("PreventiveMeasures")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid>("WorkOrderId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
+                    b.HasKey("Id");
+
+                    b.ToTable("AcceptanceRecord");
+                });
+
+            modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairExecutions", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long?>("CreatorUserId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("FaultReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<Guid?>("FaultReasonDictId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime?>("LastModificationTime")
                         .HasColumnType("datetime2");
@@ -3392,54 +3409,23 @@ namespace DeviceManagementSystem.Migrations
                     b.Property<long?>("LastModifierUserId")
                         .HasColumnType("bigint");
 
-                    b.Property<Guid>("RepairRequestId")
-                        .HasColumnType("uniqueidentifier");
+                    b.Property<string>("QualityImpactAnalysis")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
 
-                    b.Property<Guid>("RepairTaskId")
-                        .HasColumnType("uniqueidentifier");
+                    b.Property<string>("RepairMethod")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
-                    b.HasKey("Id");
+                    b.Property<int?>("RepairResult")
+                        .HasColumnType("int");
 
-                    b.ToTable("RepairAcceptance");
-                });
-
-            modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairRequestDeviceTypeRelation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("DeviceTypeId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("RepairRequestId")
+                    b.Property<Guid>("WorkOrderId")
                         .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
-                    b.ToTable("RepairRequestDeviceTypeRelation");
-                });
-
-            modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairRequestRepairerRelation", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid>("RepairRequestId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<long>("RepairerId")
-                        .HasMaxLength(20)
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("RepairerName")
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("RepairRequestRepairerRelation");
+                    b.ToTable("RepairExecution");
                 });
 
             modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairRequests", b =>
@@ -3467,14 +3453,14 @@ namespace DeviceManagementSystem.Migrations
                         .HasColumnType("datetime2");
 
                     b.Property<string>("FaultDescription")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
 
                     b.Property<DateTime>("FaultFoundTime")
                         .HasColumnType("datetime2");
 
-                    b.Property<int>("FaultLevel")
-                        .HasMaxLength(20)
+                    b.Property<int?>("FaultLevel")
+                        .HasMaxLength(10)
                         .HasColumnType("int");
 
                     b.Property<bool>("IsDeleted")
@@ -3486,104 +3472,52 @@ namespace DeviceManagementSystem.Migrations
                     b.Property<long?>("LastModifierUserId")
                         .HasColumnType("bigint");
 
-                    b.Property<string>("Remark")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
                     b.Property<int?>("RepairType")
+                        .HasMaxLength(10)
                         .HasColumnType("int");
+
+                    b.Property<long>("ReporterId")
+                        .HasColumnType("bigint");
 
                     b.Property<string>("RequestNo")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<int?>("RequestStatus")
+                    b.Property<int?>("Status")
                         .HasMaxLength(10)
                         .HasColumnType("int");
-
-                    b.Property<long>("RequesterId")
-                        .HasMaxLength(20)
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("RequesterName")
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
 
                     b.HasKey("Id");
 
                     b.ToTable("RepairRequest");
                 });
 
-            modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairTaskExecutionRecords", b =>
+            modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairWorkOrderMaintenanceTaskRelation", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<DateTime>("CreationTime")
+                    b.Property<DateTime?>("CreationTime")
                         .HasColumnType("datetime2");
 
-                    b.Property<long?>("CreatorUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("DeleterUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletionTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("FaultReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
-
-                    b.Property<DateTime?>("LastModificationTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("LastModifierUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("QualityImpactAnalysis")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<string>("RepairMethodResult")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<Guid>("RepairTaskId")
+                    b.Property<Guid>("MaintenanceTaskId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<int>("SaveType")
-                        .HasMaxLength(20)
-                        .HasColumnType("int");
+                    b.Property<Guid>("RepairWorkOrderId")
+                        .HasColumnType("uniqueidentifier");
 
                     b.HasKey("Id");
 
-                    b.ToTable("RepairTaskExecutionRecord");
+                    b.ToTable("RepairWorkOrderMaintenanceTaskRelation");
                 });
 
-            modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairTasks", b =>
+            modelBuilder.Entity("DeviceManagementSystem.Repairs.RepairWorkOrders", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTime?>("AcceptTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("AcceptanceTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("AcceptorId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("AcceptorName")
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
 
                     b.Property<DateTime>("CreationTime")
                         .HasColumnType("datetime2");
@@ -3596,26 +3530,15 @@ namespace DeviceManagementSystem.Migrations
 
                     b.Property<DateTime?>("DeletionTime")
                         .HasColumnType("datetime2");
-
-                    b.Property<Guid>("DeviceId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<int?>("DurationMinutes")
-                        .HasColumnType("int");
 
                     b.Property<DateTime?>("EndTime")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("FaultReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("bit");
 
-                    b.Property<int>("IsOverdue")
-                        .HasMaxLength(20)
-                        .HasColumnType("int");
+                    b.Property<bool>("IsOverdue")
+                        .HasColumnType("bit");
 
                     b.Property<DateTime?>("LastModificationTime")
                         .HasColumnType("datetime2");
@@ -3623,65 +3546,42 @@ namespace DeviceManagementSystem.Migrations
                     b.Property<long?>("LastModifierUserId")
                         .HasColumnType("bigint");
 
-                    b.Property<Guid?>("MaintenancePlanId")
-                        .HasColumnType("uniqueidentifier");
+                    b.Property<string>("OverdueReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
 
-                    b.Property<Guid?>("MaintenanceTaskId")
-                        .HasColumnType("uniqueidentifier");
+                    b.Property<DateTime?>("ReceiveTime")
+                        .HasColumnType("datetime2");
 
-                    b.Property<int>("NotifiedAcceptance")
-                        .HasMaxLength(20)
+                    b.Property<int?>("RepairDuration")
                         .HasColumnType("int");
-
-                    b.Property<int>("NotifyMaintenance")
-                        .HasMaxLength(20)
-                        .HasColumnType("int");
-
-                    b.Property<string>("QualityImpactAnalysis")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
-
-                    b.Property<string>("RepairMethodResult")
-                        .HasMaxLength(2000)
-                        .HasColumnType("nvarchar(2000)");
 
                     b.Property<Guid>("RepairRequestId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<string>("RepairerIds")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)");
-
-                    b.Property<string>("RepairerNames")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<DateTime>("RequestTime")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long>("RequesterId")
-                        .HasMaxLength(20)
+                    b.Property<long?>("RepairerId")
                         .HasColumnType("bigint");
 
-                    b.Property<string>("RequesterName")
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
+                    b.Property<DateTime>("ReportTime")
+                        .HasColumnType("datetime2");
+
+                    b.Property<long>("ReporterId")
+                        .HasColumnType("bigint");
 
                     b.Property<DateTime?>("StartTime")
                         .HasColumnType("datetime2");
 
-                    b.Property<string>("TaskNo")
+                    b.Property<int?>("Status")
+                        .HasColumnType("int");
+
+                    b.Property<string>("WorkOrderNo")
                         .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
-                    b.Property<int>("TaskStatus")
-                        .HasMaxLength(20)
-                        .HasColumnType("int");
-
                     b.HasKey("Id");
 
-                    b.ToTable("RepairTask");
+                    b.ToTable("RepairWorkOrder");
                 });
 
             modelBuilder.Entity("DeviceManagementSystem.Systems.Dict", b =>

@@ -5,6 +5,7 @@ using Abp.Runtime.Session;
 using DeviceManagementSystem.Attachment;
 using DeviceManagementSystem.Attachment.Dto;
 using DeviceManagementSystem.BasicDataManagement;
+using DeviceManagementSystem.Configuration;
 using DeviceManagementSystem.DeviceInfos;
 using DeviceManagementSystem.Email;
 using DeviceManagementSystem.Email.Dto;
@@ -13,8 +14,11 @@ using DeviceManagementSystem.Maintenances.Dto;
 using DeviceManagementSystem.Maintenances.Interface;
 using DeviceManagementSystem.Users;
 using DeviceManagementSystem.Utils.Common;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -39,6 +43,8 @@ namespace DeviceManagementSystem.Maintenances
         private readonly IRepository<Types, Guid> _typeRepository;
         private readonly IAttachmentAppService _attachmentAppService;
         private readonly IEmailAppService _emailAppService;
+        private readonly IRepository<DeviceTypeRelations, Guid> _deviceTypeRelationRepository;
+        private readonly IConfigurationRoot _configuration;
 
         // 工单状态常量
         private const string TASK_STATUS_PLAN = "计划";
@@ -57,10 +63,12 @@ namespace DeviceManagementSystem.Maintenances
             IRepository<Devices, Guid> deviceRepository,
             IRepository<DeviceUserRelations, Guid> deviceUserRelationRepository,
             IUserAppService userAppService,
+            IRepository<DeviceTypeRelations, Guid> deviceTypeRelationRepository,
             IRepository<MaintenanceItems, Guid> itemRepository,
             IRepository<Types, Guid> typeRepository,
             IAttachmentAppService attachmentAppService,
-            IEmailAppService emailAppService)
+            IEmailAppService emailAppService,
+            IWebHostEnvironment env)
         {
             _taskRepository = taskRepository;
             _taskItemRepository = taskItemRepository;
@@ -73,6 +81,8 @@ namespace DeviceManagementSystem.Maintenances
             _typeRepository = typeRepository;
             _attachmentAppService = attachmentAppService;
             _emailAppService = emailAppService;
+            _deviceTypeRelationRepository = deviceTypeRelationRepository;
+            _configuration = AppConfigurations.Get(env.ContentRootPath, env.EnvironmentName, env.IsDevelopment());
         }
 
         #region 查询方法
@@ -93,7 +103,11 @@ namespace DeviceManagementSystem.Maintenances
                             from p in planJoin.DefaultIfEmpty()
                             join tm in _templateRepository.GetAll().AsNoTracking() on t.TemplateId equals tm.Id into templateJoin
                             from tm in templateJoin.DefaultIfEmpty()
-                            select new { Task = t, Device = d, Plan = p, Template = tm };
+                            join dtr in _deviceTypeRelationRepository.GetAll().AsNoTracking() on d.Id equals dtr.DeviceId into deviceTypeJoin
+                            from dtr in deviceTypeJoin.DefaultIfEmpty()
+                            join dt in _typeRepository.GetAll().AsNoTracking() on dtr.TypeId equals dt.Id into typeJoin
+                            from dt in typeJoin.DefaultIfEmpty()
+                            select new { Task = t, Device = d, Plan = p, Template = tm, DeviceType = dt };
 
                 // 应用过滤条件
                 if (!string.IsNullOrWhiteSpace(input.SearchKey))
@@ -112,7 +126,7 @@ namespace DeviceManagementSystem.Maintenances
 
                 if (input.DeviceTypeId.HasValue)
                 {
-                    query = query.Where(x => x.Template.DeviceTypeId == input.DeviceTypeId.Value);
+                    query = query.Where(x => x.DeviceType != null && x.DeviceType.Id == input.DeviceTypeId.Value);
                 }
 
 
@@ -299,6 +313,87 @@ namespace DeviceManagementSystem.Maintenances
             }
         }
 
+
+        /// <summary>
+        /// 获取工单详情
+        /// </summary>
+        public async Task<CommonResult<MaintenanceTaskDto>> GetByPlanId(Guid planId)
+        {
+            try
+            {
+                var task = await _taskRepository.FirstOrDefaultAsync(it => string.Equals(it.PlanId,planId));
+                if (task == null)
+                {
+                    return CommonResult<MaintenanceTaskDto>.Error("工单不存在");
+                }
+
+                var device = await _deviceRepository.FirstOrDefaultAsync(task.DeviceId);
+                var template = await _templateRepository.FirstOrDefaultAsync(task.TemplateId);
+                var dto = await MapToDto(task, device, template);
+
+                // 获取工单项目
+                var items = await _taskItemRepository.GetAll()
+                    .Where(x => x.TaskId == task.Id)
+                    .OrderBy(x => x.SortOrder)
+                    .Select(x => new MaintenanceTaskItemDto
+                    {
+                        Id = x.Id,
+                        TaskId = x.TaskId,
+                        ItemId = x.ItemId,
+                        ItemName = x.ItemName,
+                        MaintenanceMethod = x.MaintenanceMethod,
+                        Content = x.Content,
+                        StandardValue = x.StandardValue,
+                        Result = x.Result,
+                        ActualValue = x.ActualValue,
+                        Remark = x.Remark,
+                        SortOrder = x.SortOrder,
+                        SourcePlanId = x.SourcePlanId,
+                        SourceMaintenanceLevel = x.SourceMaintenanceLevel
+                    })
+                    .ToListAsync();
+
+                dto.Items = items;
+
+                // 获取附件列表
+                var attachments = await _attachmentAppService.GetBusinessAttachments(
+                    new GetBusinessAttachmentsInput
+                    {
+                        BusinessId = task.Id,
+                        BusinessType = "MaintenanceTask"
+                    });
+
+                if (attachments.IsSuccess && attachments.Data != null)
+                {
+                    dto.Attachments = attachments.Data.Select(a => new AttachmentDto
+                    {
+                        Id = a.Id,
+                        FileName = a.FileName,
+                        FileSize = a.FileSize,
+                        AttachmentType = a.AttachmentType,
+                        LinkUrl = a.LinkUrl,
+                        FilePath = a.FilePath,
+                        CreationTime = a.CreationTime
+                    }).ToList();
+                }
+
+                if (device != null)
+                {
+                    dto.DeviceLocation = device.Location;
+                }
+
+                return CommonResult<MaintenanceTaskDto>.Success(dto);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("获取工单详情失败", ex);
+                return CommonResult<MaintenanceTaskDto>.Error($"获取工单详情失败: {ex.Message}");
+            }
+        }
+
+
+
+
         /// <summary>
         /// 获取工单详情
         /// </summary>
@@ -441,6 +536,7 @@ namespace DeviceManagementSystem.Maintenances
                 var today = DateTime.Today;
                 var nextTwoWeeks = today.AddDays(14);
 
+                // 获取所有启用的计划（按设备分组）
                 var plans = await _planRepository.GetAll()
                     .Where(x => x.Status == "启用" &&
                                !x.HasGeneratedTask &&
@@ -451,6 +547,7 @@ namespace DeviceManagementSystem.Maintenances
                     .ThenBy(x => x.NextMaintenanceDate)
                     .ToListAsync();
 
+                var generatedPlans = new List<MaintenancePlanDto>();
                 var plansByDevice = plans.GroupBy(x => x.DeviceId.Value);
                 var generatedCount = 0;
 
@@ -494,6 +591,17 @@ namespace DeviceManagementSystem.Maintenances
                             {
                                 plan.HasGeneratedTask = true;
                                 await _planRepository.UpdateAsync(plan);
+
+                                // 记录生成的计划信息
+                                generatedPlans.Add(new MaintenancePlanDto
+                                {
+                                    Id = plan.Id,
+                                    PlanName = plan.PlanName,
+                                    DeviceName = device.DeviceName,
+                                    DeviceCode = device.DeviceCode,
+                                    MaintenanceLevel = plan.MaintenanceLevel,
+                                    NextMaintenanceDate = plan.NextMaintenanceDate
+                                });
                             }
                             generatedCount++;
                             processedIndex = mergeEndIndex;
@@ -503,6 +611,17 @@ namespace DeviceManagementSystem.Maintenances
                             await GenerateSingleTask(currentPlan, device);
                             currentPlan.HasGeneratedTask = true;
                             await _planRepository.UpdateAsync(currentPlan);
+
+                            generatedPlans.Add(new MaintenancePlanDto
+                            {
+                                Id = currentPlan.Id,
+                                PlanName = currentPlan.PlanName,
+                                DeviceName = device.DeviceName,
+                                DeviceCode = device.DeviceCode,
+                                MaintenanceLevel = currentPlan.MaintenanceLevel,
+                                NextMaintenanceDate = currentPlan.NextMaintenanceDate
+                            });
+
                             generatedCount++;
                             processedIndex++;
                         }
@@ -510,7 +629,16 @@ namespace DeviceManagementSystem.Maintenances
                 }
 
                 await CurrentUnitOfWork.SaveChangesAsync();
-                return CommonResult<int>.Success($"成功生成 {generatedCount} 个工单", generatedCount);
+
+                // 发送邮件通知（异步）
+                if (generatedPlans.Any())
+                {
+                    await SendNextWeekTasksEmail(generatedPlans);
+                }
+
+                return CommonResult<int>.Success(
+                    $"成功生成 {generatedCount} 个工单（其中合并工单 {plansByDevice.Sum(g => g.Count(p => p.HasGeneratedTask && g.Count() > 1))} 个）",
+                    generatedCount);
             }
             catch (Exception ex)
             {
@@ -520,37 +648,145 @@ namespace DeviceManagementSystem.Maintenances
         }
 
         /// <summary>
-        /// 为指定计划生成工单
+        /// 发送下周保养计划邮件
         /// </summary>
-        public async Task<CommonResult> GenerateTaskForPlan(Guid planId)
+        private async Task SendNextWeekTasksEmail(List<MaintenancePlanDto> plans)
         {
             try
             {
-                var plan = await _planRepository.FirstOrDefaultAsync(planId);
+                // 获取收件人列表（所有保养人员）
+                var maintainers = await _deviceUserRelationRepository.GetAll()
+                    .Where(x => x.UserType == "保养人员")
+                    .Select(x => x.UserId)
+                    .Distinct()
+                    .ToListAsync();
+
+                var recipientEmails = new List<string>();
+                foreach (var userId in maintainers)
+                {
+                    var email = await GetUserEmail(userId);
+                    if (!string.IsNullOrEmpty(email))
+                    {
+                        recipientEmails.Add(email);
+                    }
+                }
+
+                if (!recipientEmails.Any()) return;
+
+                var emailContent = await BuildNextWeekTasksEmailContent(plans);
+                var emailRequest = new EmailNotificationRequest
+                {
+                    Subject = $"【保养计划】下周共有 {plans.Count} 个保养计划待执行",
+                    Body = emailContent,
+                    MailTo = recipientEmails,
+                };
+
+                await _emailAppService.SendEmailForNotificationAsync(emailRequest);
+                Logger.Info($"已发送下周保养计划邮件，收件人 {recipientEmails.Count} 人");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("发送下周保养计划邮件失败", ex);
+            }
+        }
+
+
+     
+
+       
+
+
+
+        /// <summary>
+        /// 获取所有保养人员邮箱
+        /// </summary>
+        private async Task<List<string>> GetAllMaintainerEmails()
+        {
+            var maintainerUserIds = await _deviceUserRelationRepository.GetAll()
+                .Where(x => x.UserType == "保养人员")
+                .Select(x => x.UserId)
+                .Distinct()
+                .ToListAsync();
+            var emails = new List<string>();
+            foreach (var userId in maintainerUserIds)
+            {
+                var email = await GetUserEmail(userId);
+                if (!string.IsNullOrEmpty(email)) emails.Add(email);
+            }
+            return emails;
+        }
+
+
+
+
+
+        /// <summary>
+        /// 手动生成工单
+        /// </summary>
+        public async Task<CommonResult> GenerateManualWithDate(GenerateTaskInput input)
+        {
+            try
+            {
+                // 1. 验证执行日期不能早于今天
+                if (input.ExecuteDate < DateTime.Today)
+                {
+                    return CommonResult.Error("执行日期不能早于今天");
+                }
+
+                // 2. 获取计划并验证
+                var plan = await _planRepository.FirstOrDefaultAsync(input.PlanId);
                 if (plan == null)
                 {
                     return CommonResult.Error("计划不存在");
                 }
 
+                // 3. 获取设备
                 var device = await _deviceRepository.FirstOrDefaultAsync(plan.DeviceId ?? Guid.Empty);
                 if (device == null)
                 {
                     return CommonResult.Error("设备不存在");
                 }
 
-                await GenerateSingleTask(plan, device);
-                plan.HasGeneratedTask = true;
-                await _planRepository.UpdateAsync(plan);
+                // 4. 临时修改计划的下次保养日期，复用原有的生成方法
+                var originalNextDate = plan.NextMaintenanceDate;
+                var originalRemindDate = plan.NextMaintenanceDate.AddDays(-7);
+
+                try
+                {
+                    // 临时设置新的执行日期
+                    plan.NextMaintenanceDate = (DateTime)input.ExecuteDate;
+                    await _planRepository.UpdateAsync(plan);
+
+                    // 复用原有的生成单个工单方法
+                    await GenerateSingleTask(plan, device);
+
+                    // 标记已生成
+                    plan.HasGeneratedTask = true;
+                    await _planRepository.UpdateAsync(plan);
+                }
+                finally
+                {
+                    // 恢复原来的日期（如果需要保留原始计划数据）
+                    // 注意：如果计划的下次保养日期不应该被修改，可以在这里恢复
+                    // 根据业务需求决定是否恢复
+                    if (plan.NextMaintenanceDate != originalNextDate)
+                    {
+                        plan.NextMaintenanceDate = originalNextDate;
+                        await _planRepository.UpdateAsync(plan);
+                    }
+                }
+
                 await CurrentUnitOfWork.SaveChangesAsync();
 
                 return CommonResult.Ok("工单生成成功");
             }
             catch (Exception ex)
             {
-                Logger.Error($"为计划 {planId} 生成工单失败", ex);
+                Logger.Error($"为计划 {input.PlanId} 生成工单失败", ex);
                 return CommonResult.Error($"生成工单失败: {ex.Message}");
             }
         }
+
 
         private async Task GenerateMergedTask(List<MaintenancePlans> plans, Devices device)
         {
@@ -1017,7 +1253,7 @@ namespace DeviceManagementSystem.Maintenances
 
                     if (string.IsNullOrEmpty(executorEmail)) continue;
 
-                    var emailContent = BuildReminderEmailContent(executorTasks, executorId);
+                    var emailContent = BuildReminderEmailContent(executorTasks,executorId);
                     var emailRequest = new EmailRequest
                     {
                         Subject = $"【待办提醒】您有 {executorTasks.Count} 个保养工单待执行",
@@ -1042,14 +1278,38 @@ namespace DeviceManagementSystem.Maintenances
         /// <returns></returns>
         private string BuildReminderEmailContent(List<PendingRemindTaskDto> tasks, long executorId)
         {
+            var executorName = _userAppService.GetNameByUserId(executorId).Result;
+            var today = DateTime.Today;
+
             var strBuilder = new StringBuilder();
             strBuilder.AppendLine("<!DOCTYPE html>");
             strBuilder.AppendLine("<html>");
+            strBuilder.AppendLine("<head>");
+            strBuilder.AppendLine("<meta charset='UTF-8'>");
+            strBuilder.AppendLine("<style>");
+            strBuilder.AppendLine("body { font-family: 'Microsoft YaHei', Arial, sans-serif; line-height: 1.6; }");
+            strBuilder.AppendLine(".container { max-width: 800px; margin: 0 auto; padding: 20px; }");
+            strBuilder.AppendLine(".header { background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%); color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }");
+            strBuilder.AppendLine(".content { background: #fff; padding: 20px; border: 1px solid #e8e8e8; border-top: none; border-radius: 0 0 8px 8px; }");
+            strBuilder.AppendLine("h2 { color: #1890ff; margin-top: 0; }");
+            strBuilder.AppendLine("table { border-collapse: collapse; width: 100%; margin: 20px 0; }");
+            strBuilder.AppendLine("th { background: #f5f5f5; padding: 12px; text-align: left; font-weight: 500; }");
+            strBuilder.AppendLine("td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }");
+            strBuilder.AppendLine(".btn { display: inline-block; padding: 10px 20px; background: #1890ff; color: white; text-decoration: none; border-radius: 4px; }");
+            strBuilder.AppendLine(".footer { margin-top: 20px; padding-top: 20px; border-top: 1px solid #f0f0f0; color: #999; font-size: 12px; text-align: center; }");
+            strBuilder.AppendLine("</style>");
+            strBuilder.AppendLine("</head>");
             strBuilder.AppendLine("<body>");
-            strBuilder.AppendLine($"<h2>您有 {tasks.Count} 个保养工单待执行</h2>");
-            strBuilder.AppendLine("<table border='1' style='border-collapse: collapse; width: 100%;'>");
-            strBuilder.AppendLine("<tr><th>工单编号</th><th>工单名称</th><th>设备名称</th><th>保养等级</th><th>计划开始</th><th>计划完成</th></tr>");
-
+            strBuilder.AppendLine("<div class='container'>");
+            strBuilder.AppendLine("<div class='header'>");
+            strBuilder.AppendLine("<h1>🔔 保养工单待办提醒</h1>");
+            strBuilder.AppendLine("</div>");
+            strBuilder.AppendLine("<div class='content'>");
+            strBuilder.AppendLine($"<h2>您好，{executorName}</h2>");
+            strBuilder.AppendLine($"<p>您有 <strong style='color: #1890ff;'>{tasks.Count}</strong> 个保养工单即将开始执行，请及时处理。</p>");
+            strBuilder.AppendLine("<table>");
+            strBuilder.AppendLine("<thead><tr><th>工单编号</th><th>工单名称</th><th>设备名称</th><th>保养等级</th><th>计划开始</th><th>计划完成</th></tr></thead>");
+            strBuilder.AppendLine("<tbody>");
             foreach (var task in tasks)
             {
                 strBuilder.AppendLine("<tr>");
@@ -1061,8 +1321,101 @@ namespace DeviceManagementSystem.Maintenances
                 strBuilder.AppendLine($"<td>{task.PlanEndDate:yyyy-MM-dd}</td>");
                 strBuilder.AppendLine("</tr>");
             }
+            strBuilder.AppendLine("</tbody></table>");
+            strBuilder.AppendLine($"<p style='text-align: center;'><a href='{_configuration["WebStation:Host"]}/#/biz/device-maintenance/task?status=待执行' class='btn'>立即处理待办工单</a></p>");
+            strBuilder.AppendLine("<div class='footer'>此邮件由系统自动发送，请勿回复。如有疑问，请联系管理员。</div>");
+            strBuilder.AppendLine("</div></div></body></html>");
+            return strBuilder.ToString();
+        }
 
+
+
+
+        /// <summary>
+        /// 构建下周保养计划邮件内容
+        /// </summary>
+        private async Task<string> BuildNextWeekTasksEmailContent(List<MaintenancePlanDto> plans)
+        {
+            var webHost = _configuration["WebStation:Host"];
+
+            var strBuilder = new StringBuilder();
+            strBuilder.AppendLine("<!DOCTYPE html>");
+            strBuilder.AppendLine("<html>");
+            strBuilder.AppendLine("<head>");
+            strBuilder.AppendLine("<meta charset='UTF-8'>");
+            strBuilder.AppendLine("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+            strBuilder.AppendLine("<style>");
+            strBuilder.AppendLine("body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #f5f7fa; }");
+            strBuilder.AppendLine(".email-container { max-width: 700px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }");
+            strBuilder.AppendLine(".email-header { background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%); padding: 32px 24px; text-align: center; }");
+            strBuilder.AppendLine(".email-header h1 { color: #ffffff; margin: 0; font-size: 24px; font-weight: 500; }");
+            strBuilder.AppendLine(".email-header p { color: rgba(255,255,255,0.9); margin: 8px 0 0; }");
+            strBuilder.AppendLine(".email-body { padding: 32px 24px; }");
+            strBuilder.AppendLine(".greeting { margin-bottom: 24px; }");
+            strBuilder.AppendLine(".greeting h2 { color: #333; margin: 0 0 8px; font-size: 20px; }");
+            strBuilder.AppendLine(".stats-card { background: #f6ffed; border-radius: 12px; padding: 20px; margin-bottom: 24px; text-align: center; border: 1px solid #b7eb8f; }");
+            strBuilder.AppendLine(".stats-number { font-size: 48px; font-weight: 600; color: #52c41a; line-height: 1; }");
+            strBuilder.AppendLine(".stats-label { color: #666; margin-top: 8px; }");
+            strBuilder.AppendLine("table { width: 100%; border-collapse: collapse; margin: 20px 0; }");
+            strBuilder.AppendLine("th { background: #f5f5f5; padding: 12px; text-align: left; font-weight: 500; color: #333; border-bottom: 2px solid #e8e8e8; }");
+            strBuilder.AppendLine("td { padding: 12px; border-bottom: 1px solid #f0f0f0; color: #666; }");
+            strBuilder.AppendLine(".level-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }");
+            strBuilder.AppendLine(".level-month { background: #e6f7ff; color: #1890ff; }");
+            strBuilder.AppendLine(".level-quarter { background: #f6ffed; color: #52c41a; }");
+            strBuilder.AppendLine(".level-half { background: #fff7e6; color: #fa8c16; }");
+            strBuilder.AppendLine(".level-year { background: #f9f0ff; color: #722ed1; }");
+            strBuilder.AppendLine(".btn { display: inline-block; padding: 12px 28px; background: #52c41a; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 500; }");
+            strBuilder.AppendLine(".btn:hover { background: #389e0d; }");
+            strBuilder.AppendLine(".email-footer { background: #fafafa; padding: 20px 24px; text-align: center; border-top: 1px solid #f0f0f0; color: #999; font-size: 12px; }");
+            strBuilder.AppendLine("</style>");
+            strBuilder.AppendLine("</head>");
+            strBuilder.AppendLine("<body>");
+            strBuilder.AppendLine($"<div class='email-container'>");
+            strBuilder.AppendLine($"<div class='email-header'>");
+            strBuilder.AppendLine($"<h1>📋 下周保养计划通知</h1>");
+            strBuilder.AppendLine($"<p>系统自动生成，请提前安排</p>");
+            strBuilder.AppendLine($"</div>");
+            strBuilder.AppendLine($"<div class='email-body'>");
+            strBuilder.AppendLine($"<div class='greeting'>");
+            strBuilder.AppendLine($"<h2>您好</h2>");
+            strBuilder.AppendLine($"<p>以下是下周需要执行的保养计划，系统已自动生成对应工单，请相关执行人提前做好准备。</p>");
+            strBuilder.AppendLine($"</div>");
+            strBuilder.AppendLine($"<div class='stats-card'>");
+            strBuilder.AppendLine($"<div class='stats-number'>{plans.Count}</div>");
+            strBuilder.AppendLine($"<div class='stats-label'>个下周保养计划</div>");
+            strBuilder.AppendLine($"</div>");
+            strBuilder.AppendLine("<table>");
+            strBuilder.AppendLine("<thead><tr><th>计划名称</th><th>设备名称</th><th>保养等级</th><th>计划执行日期</th></tr></thead>");
+            strBuilder.AppendLine("<tbody>");
+            foreach (var plan in plans)
+            {
+                var levelClass = plan.MaintenanceLevel switch
+                {
+                    "月度" => "level-month",
+                    "季度" => "level-quarter",
+                    "半年度" => "level-half",
+                    "年度" => "level-year",
+                    _ => ""
+                };
+                strBuilder.AppendLine("<tr>");
+                strBuilder.AppendLine($"<td>{plan.PlanName}</td>");
+                strBuilder.AppendLine($"<td>{plan.DeviceName}<br/><span style='font-size:11px;color:#999;'>{plan.DeviceCode}</span></td>");
+                strBuilder.AppendLine($"<td><span class='level-badge {levelClass}'>{plan.MaintenanceLevelText}</span></td>");
+                strBuilder.AppendLine($"<td>{plan.NextMaintenanceDate:yyyy-MM-dd}</td>");
+                strBuilder.AppendLine("</tr>");
+            }
+            strBuilder.AppendLine("</tbody>");
             strBuilder.AppendLine("</table>");
+            strBuilder.AppendLine($"<div style='text-align: center; margin: 32px 0;'>");
+            strBuilder.AppendLine($"<a href='{webHost}/#/biz/device-maintenance/plan' class='btn'>查看全部保养计划</a>");
+            strBuilder.AppendLine($"</div>");
+            strBuilder.AppendLine($"</div>");
+            strBuilder.AppendLine($"<div class='email-footer'>");
+            strBuilder.AppendLine($"<p>此邮件由设备保养管理系统自动发送，请勿回复。</p>");
+            strBuilder.AppendLine($"<p>如有疑问，请联系系统管理员。</p>");
+            strBuilder.AppendLine($"<p>&copy; {DateTime.Now.Year} 设备保养管理系统</p>");
+            strBuilder.AppendLine($"</div>");
+            strBuilder.AppendLine($"</div>");
             strBuilder.AppendLine("</body>");
             strBuilder.AppendLine("</html>");
 
@@ -1091,7 +1444,9 @@ namespace DeviceManagementSystem.Maintenances
                             from d in deviceJoin.DefaultIfEmpty()
                             join tm in _templateRepository.GetAll().AsNoTracking() on t.TemplateId equals tm.Id into templateJoin
                             from tm in templateJoin.DefaultIfEmpty()
-                            join dt in _typeRepository.GetAll().AsNoTracking() on tm.DeviceTypeId equals dt.Id into typeJoin
+                            join dtr in _deviceTypeRelationRepository.GetAll().AsNoTracking() on d.Id equals dtr.DeviceId into deviceTypeJoin
+                            from dtr in deviceTypeJoin.DefaultIfEmpty()
+                            join dt in _typeRepository.GetAll().AsNoTracking() on dtr.TypeId equals dt.Id into typeJoin
                             from dt in typeJoin.DefaultIfEmpty()
                             select new
                             {
@@ -1120,8 +1475,7 @@ namespace DeviceManagementSystem.Maintenances
                 // 应用设备类型筛选
                 if (input.DeviceTypeIds != null && input.DeviceTypeIds.Any())
                 {
-                    query = query.Where(x => x.Template != null && 
-                                            input.DeviceTypeIds.Contains(x.Template.DeviceTypeId));
+                    query = query.Where(x => x.DeviceType != null && input.DeviceTypeIds.Contains(x.DeviceType.Id));
                 }
 
                 // 应用保养等级筛选
@@ -1522,8 +1876,7 @@ namespace DeviceManagementSystem.Maintenances
 
         private async Task<string> GetDeviceTypeName(Guid deviceId)
         {
-            var typeRepository = IocManager.Instance.Resolve<IRepository<DeviceTypeRelations, Guid>>();
-            var typeRelation = await typeRepository.FirstOrDefaultAsync(x => x.DeviceId == deviceId);
+            var typeRelation = await _deviceTypeRelationRepository.FirstOrDefaultAsync(x => x.DeviceId == deviceId);
             if (typeRelation != null)
             {
                 var type = await _typeRepository.FirstOrDefaultAsync(typeRelation.TypeId);

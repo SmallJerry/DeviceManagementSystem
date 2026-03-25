@@ -73,11 +73,6 @@ namespace DeviceManagementSystem.Maintenances.Interface
         Task<CommonResult<List<MaintenancePlanSimpleDto>>> GetSimpleList();
 
 
-        /// <summary>
-        /// 手动生成工单
-        /// </summary>
-        Task<CommonResult> GenerateTask(Guid planId);
-
 
 
         /// <summary>

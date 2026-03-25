@@ -136,4 +136,112 @@ namespace DeviceManagementSystem.DeviceInfos.Dto
         /// </summary>
         public string PlanName { get; set; }
     }
+
+
+    /// <summary>
+    /// 获取设备工单输入参数
+    /// </summary>
+    public class GetDeviceTasksInput : PageRequest
+    {
+        /// <summary>
+        /// 设备ID
+        /// </summary>
+        public Guid DeviceId { get; set; }
+
+        /// <summary>
+        /// 工单编号（模糊搜索）
+        /// </summary>
+        public string TaskNo { get; set; }
+
+        /// <summary>
+        /// 工单状态筛选（待执行/计划/执行中）
+        /// </summary>
+        public string Status { get; set; }
+
+        /// <summary>
+        /// 计划开始日期开始
+        /// </summary>
+        public DateTime? PlanStartDateBegin { get; set; }
+
+        /// <summary>
+        /// 计划开始日期结束
+        /// </summary>
+        public DateTime? PlanStartDateEnd { get; set; }
+    }
+
+    /// <summary>
+    /// 保养计划详情DTO
+    /// </summary>
+    public class MaintenancePlanDetailDto
+    {
+        /// <summary>
+        /// 计划ID
+        /// </summary>
+        public Guid Id { get; set; }
+
+        /// <summary>
+        /// 计划名称
+        /// </summary>
+        public string PlanName { get; set; }
+
+        /// <summary>
+        /// 模板ID
+        /// </summary>
+        public Guid TemplateId { get; set; }
+
+        /// <summary>
+        /// 模板名称
+        /// </summary>
+        public string TemplateName { get; set; }
+
+        /// <summary>
+        /// 保养等级
+        /// </summary>
+        public string MaintenanceLevel { get; set; }
+
+        /// <summary>
+        /// 保养等级显示文本
+        /// </summary>
+        public string MaintenanceLevelText { get; set; }
+
+        /// <summary>
+        /// 周期类型
+        /// </summary>
+        public string CycleType { get; set; }
+
+        /// <summary>
+        /// 周期天数
+        /// </summary>
+        public int CycleDays { get; set; }
+
+        /// <summary>
+        /// 首次保养日期
+        /// </summary>
+        public DateTime? FirstMaintenanceDate { get; set; }
+
+        /// <summary>
+        /// 下次保养日期
+        /// </summary>
+        public DateTime? NextMaintenanceDate { get; set; }
+
+        /// <summary>
+        /// 上次保养日期
+        /// </summary>
+        public DateTime? LastMaintenanceDate { get; set; }
+
+        /// <summary>
+        /// 计划状态
+        /// </summary>
+        public string Status { get; set; }
+
+        /// <summary>
+        /// 备注
+        /// </summary>
+        public string Remark { get; set; }
+
+        /// <summary>
+        /// 剩余天数
+        /// </summary>
+        public int? RemainingDays { get; set; }
+    }
 }

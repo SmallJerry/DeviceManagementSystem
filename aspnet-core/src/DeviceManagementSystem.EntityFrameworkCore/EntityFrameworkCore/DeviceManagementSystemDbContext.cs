@@ -10,6 +10,7 @@ using DeviceManagementSystem.FileInfos;
 using DeviceManagementSystem.FlowManagement;
 using DeviceManagementSystem.Maintenances;
 using DeviceManagementSystem.MultiTenancy;
+using DeviceManagementSystem.Repairs;
 using DeviceManagementSystem.Systems;
 using DeviceManagementSystem.WorkFlows;
 using Microsoft.EntityFrameworkCore;
@@ -266,6 +267,43 @@ namespace DeviceManagementSystem.EntityFrameworkCore
         #endregion
 
 
+
+        #region   维修模块数据库表
+
+
+        /// <summary>
+        /// 维修验收记录表
+        /// </summary>
+        public DbSet<RepairAcceptances> RepairAcceptances { get; set; }
+        
+        /// <summary>
+        /// 维修申报表
+        /// </summary>
+        public DbSet<RepairRequests> RepairRequests { get; set; }
+
+
+        /// <summary>
+        /// 维修申报与设备类型关系表
+        /// </summary>
+        public DbSet<RepairRequestDeviceTypeRelation> RepairRequestDeviceTypeRelations { get; set; }
+
+        /// <summary>
+        /// 维修申报与维修人关系表
+        /// </summary>
+        public DbSet<RepairRequestRepairerRelation> RepairRequestRepairerRelations { get; set; }
+
+
+        /// <summary>
+        /// 维修工单执行记录表
+        /// </summary>
+        public DbSet<RepairTaskExecutionRecords> RepairTaskExecutionRecords { get; set; }
+
+        /// <summary>
+        /// 维修工单表
+        /// </summary>
+        public DbSet<RepairTasks> RepairTasks { get; set; }
+
+        #endregion
 
         public DeviceManagementSystemDbContext(DbContextOptions<DeviceManagementSystemDbContext> options)
             : base(options)

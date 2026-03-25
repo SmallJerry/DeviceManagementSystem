@@ -33,19 +33,25 @@ namespace DeviceManagementSystem.Maintenances
         private readonly IRepository<DeviceMaintenancePlanRelation, Guid> _devicePlanRelationRepository;
         private readonly IRepository<Devices, Guid> _deviceRepository;
         private readonly IRepository<MaintenanceTasks, Guid> _taskRepository; 
+        private readonly IRepository<Types, Guid> _typeRepository;
+        private readonly IRepository<DeviceTypeRelations,Guid> _deviceTypeRelationRepository;
 
         public MaintenancePlanAppService(
             IRepository<MaintenancePlans, Guid> planRepository,
             IRepository<MaintenanceTemplates, Guid> templateRepository,
             IRepository<DeviceMaintenancePlanRelation, Guid> devicePlanRelationRepository,
             IRepository<Devices, Guid> deviceRepository,
-            IRepository<MaintenanceTasks, Guid> taskRepository)
+            IRepository<MaintenanceTasks, Guid> taskRepository,
+            IRepository<Types, Guid> typeRepository,
+            IRepository<DeviceTypeRelations,Guid> deviceTypeRelationRepository)
         {
             _planRepository = planRepository;
             _templateRepository = templateRepository;
             _devicePlanRelationRepository = devicePlanRelationRepository;
             _deviceRepository = deviceRepository;
             _taskRepository = taskRepository;
+            _typeRepository = typeRepository;
+            _deviceTypeRelationRepository = deviceTypeRelationRepository;
         }
 
         #region 查询方法
@@ -120,6 +126,90 @@ namespace DeviceManagementSystem.Maintenances
                 return CommonResult<Page<MaintenancePlanDto>>.Error($"获取保养计划分页列表失败: {ex.Message}");
             }
         }
+
+
+
+        /// <summary>
+        /// 获取所有保养计划列表（用于分组展示）
+        /// </summary>
+        /// <param name="input"></param>
+        /// <returns></returns>
+        [DisableAuditing]
+        public async Task<CommonResult<List<MaintenancePlanGroupDto>>> GetAllList([FromQuery] MaintenancePlanQueryInput input)
+        {
+            try
+            {
+                var query = from p in _planRepository.GetAll().AsNoTracking()
+                            join d in _deviceRepository.GetAll().AsNoTracking() on p.DeviceId equals d.Id into deviceJoin
+                            from d in deviceJoin.DefaultIfEmpty()
+                            join t in _templateRepository.GetAll().AsNoTracking() on p.TemplateId equals t.Id into templateJoin
+                            from t in templateJoin.DefaultIfEmpty()
+                            join dtr in _deviceTypeRelationRepository.GetAll().AsNoTracking() on d.Id equals dtr.DeviceId into deviceTypeJoin
+                            from dtr in deviceTypeJoin.DefaultIfEmpty()
+                            join dt in _typeRepository.GetAll().AsNoTracking() on dtr.TypeId equals dt.Id into typeJoin
+                            from dt in typeJoin.DefaultIfEmpty()
+                            select new MaintenancePlanGroupDto
+                            {
+                                Id = p.Id,
+                                PlanName = p.PlanName,
+                                DeviceId = p.DeviceId,
+                                DeviceCode = d != null ? d.DeviceCode : null,
+                                DeviceName = d != null ? d.DeviceName : null,
+                                DeviceTypeId = dt != null ? dt.Id : (Guid?)null,
+                                DeviceTypeName = dt != null ? dt.TypeName : "未分类",
+                                TemplateId = p.TemplateId,
+                                TemplateName = t != null ? t.TemplateName : null,
+                                MaintenanceLevel = p.MaintenanceLevel,
+                                CycleType = p.CycleType,
+                                CycleDays = p.CycleDays,
+                                FirstMaintenanceDate = p.FirstMaintenanceDate,
+                                NextMaintenanceDate = p.NextMaintenanceDate,
+                                LastMaintenanceDate = p.LastMaintenanceDate,
+                                Status = p.Status,
+                                HasGeneratedTask = p.HasGeneratedTask,
+                                Remark = p.Remark
+                            };
+
+                // 应用过滤条件
+                if (!string.IsNullOrWhiteSpace(input.SearchKey))
+                {
+                    query = query.Where(x =>
+                        x.PlanName.Contains(input.SearchKey) ||
+                        (x.DeviceName != null && x.DeviceName.Contains(input.SearchKey)) ||
+                        (x.DeviceCode != null && x.DeviceCode.Contains(input.SearchKey)));
+                }
+
+                if (input.DeviceTypeId.HasValue)
+                {
+                    query = query.Where(x => x.DeviceTypeId == input.DeviceTypeId.Value);
+                }
+
+                if (!string.IsNullOrWhiteSpace(input.MaintenanceLevel))
+                {
+                    query = query.Where(x => x.MaintenanceLevel == input.MaintenanceLevel);
+                }
+
+                if (!string.IsNullOrWhiteSpace(input.Status))
+                {
+                    query = query.Where(x => x.Status == input.Status);
+                }
+
+                var result = await query
+                    .OrderBy(x => x.DeviceTypeName)
+                    .ThenBy(x => x.DeviceName)
+                    .ThenBy(x => x.MaintenanceLevel)
+                    .ToListAsync();
+
+                return CommonResult<List<MaintenancePlanGroupDto>>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("获取保养计划列表失败", ex);
+                return CommonResult<List<MaintenancePlanGroupDto>>.Error($"获取保养计划列表失败: {ex.Message}");
+            }
+        }
+
+
 
 
         /// <summary>
@@ -600,53 +690,9 @@ namespace DeviceManagementSystem.Maintenances
             return await UpdatePlanStatus(input.Id, input.Status);
         }
 
-        /// <summary>
-        /// 手动生成工单
-        /// </summary>
-        public async Task<CommonResult> GenerateTask(Guid planId)
-        {
-            try
-            {
-                var plan = await _planRepository.FirstOrDefaultAsync(planId);
-                if (plan == null)
-                {
-                    return CommonResult.Error("计划不存在");
-                }
+       
 
-                if (plan.HasGeneratedTask)
-                {
-                    return CommonResult.Error("该计划已生成工单");
-                }
 
-                // 直接创建工单，而不是调用服务
-                var task = new MaintenanceTasks
-                {
-                    PlanId = planId,
-                    TaskName = $"{plan.PlanName}-{DateTime.Now:yyyyMMdd}",
-                    DeviceId = (Guid)plan.DeviceId,
-                    TemplateId = plan.TemplateId,
-                    MaintenanceLevel = plan.MaintenanceLevel,
-                    PlanStartDate = plan.NextMaintenanceDate,
-                    Status = "待执行",
-                    CreateType = "自动"
-                };
-
-                await _taskRepository.InsertAsync(task);
-
-                // 标记已生成
-                plan.HasGeneratedTask = true;
-                await _planRepository.UpdateAsync(plan);
-
-                await CurrentUnitOfWork.SaveChangesAsync();
-
-                return CommonResult.Ok("工单生成成功");
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("手动生成工单失败", ex);
-                return CommonResult.Error($"手动生成工单失败: {ex.Message}");
-            }
-        }
 
         /// <summary>
         /// 记录保养完成（更新下次保养日期）

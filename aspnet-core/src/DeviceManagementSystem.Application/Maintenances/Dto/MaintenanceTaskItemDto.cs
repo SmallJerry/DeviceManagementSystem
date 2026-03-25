@@ -593,4 +593,7 @@ namespace DeviceManagementSystem.Maintenances.Dto
 
     #endregion
 
+
+  
+
 }

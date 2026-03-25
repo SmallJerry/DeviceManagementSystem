@@ -296,17 +296,14 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                 await AddHistoryAsync(instanceId, nodeIdentifier, nodeName, nodeType,
                     CMD_AUTO_APPROVED, null, "系统", "自动通过", formData, null);
 
-                // 自动通过后继续处理下一个节点
                 var instance = await _flowInstanceRepository.GetAsync(instanceId);
                 var nextNode = node["childNode"] as JObject;
                 if (nextNode != null)
                 {
-                    Logger.Info($"自动通过后继续处理下一个节点");
                     await ProcessNodeAsync(instance, nextNode, instanceId, instance.BusinessId, instance.BusinessType, instance.InitiatorId, formData, nodeIndex + 1);
                 }
                 else
                 {
-                    Logger.Info($"自动通过后无下一个节点，流程结束");
                     await CompleteProcessAsync(instanceId, STATUS_APPROVED);
                 }
                 return;
@@ -324,66 +321,337 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
             var assignees = node["assignees"] as JArray;
             if (assignees == null || !assignees.Any())
             {
-                // 审批人为空时处理
-                var noAuditorType = node["flowNodeNoAuditorType"]?.Value<int>() ?? 0;
-                Logger.Info($"审批人为空，处理方式: {noAuditorType}");
-
-                if (noAuditorType == 0) // 自动通过
-                {
-                    await AddHistoryAsync(instanceId, nodeIdentifier, nodeName, nodeType,
-                        CMD_AUTO_APPROVED, null, "系统", "审批人为空，自动通过", formData, null);
-
-                    // 自动通过后继续处理下一个节点
-                    var instance = await _flowInstanceRepository.GetAsync(instanceId);
-                    var nextNode = node["childNode"] as JObject;
-                    if (nextNode != null)
-                    {
-                        Logger.Info($"审批人为空自动通过后继续处理下一个节点");
-                        await ProcessNodeAsync(instance, nextNode, instanceId, instance.BusinessId, instance.BusinessType, instance.InitiatorId, formData, nodeIndex + 1);
-                    }
-                    else
-                    {
-                        Logger.Info($"审批人为空自动通过后无下一个节点，流程结束");
-                        await CompleteProcessAsync(instanceId, STATUS_APPROVED);
-                    }
-                    return;
-                }
-                else if (noAuditorType == 1) // 指定人员
-                {
-                    var assignee = node["flowNodeNoAuditorAssignee"]?.Value<string>();
-                    if (!string.IsNullOrEmpty(assignee) && long.TryParse(assignee, out long userId))
-                    {
-                        var userName = await _userAppService.GetNameByUserId(userId);
-                        await CreateTaskAsync(instanceId, nodeIdentifier, nodeName, nodeType,
-                            userId, userName, multiInstanceType, 1, node["formAuths"]?.ToString());
-                        Logger.Info($"创建任务(审批人为空指定人员): 用户={userName}, 用户ID={userId}, 节点标识={nodeIdentifier}");
-                    }
-                }
+                // 审批人为空时的处理逻辑保持不变
+                await HandleNoAssigneeAsync(instanceId, node, initiatorId, formData, nodeIdentifier, nodeName, nodeType, nodeIndex);
                 return;
             }
 
             // 获取表单权限
             var formAuths = node["formAuths"]?.ToString();
 
-            // 创建任务 - 根据多实例类型处理
-            int order = 1;
-            int taskCount = 0;
-
+            // 收集所有审批人
+            var allUsers = new List<(long UserId, string UserName)>();
             foreach (var assignee in assignees)
             {
                 var users = await ParseAssigneesAsync(assignee as JObject, initiatorId);
-                foreach (var user in users)
-                {
-                    await CreateTaskAsync(instanceId, nodeIdentifier, nodeName, nodeType,
-                        user.UserId, user.UserName, multiInstanceType, order++, formAuths);
-                    taskCount++;
-                    Logger.Info($"创建任务: 用户={user.UserName}, 用户ID={user.UserId}, 节点标识={nodeIdentifier}, 多实例类型={multiInstanceType}, 顺序={order - 1}");
-                }
+                allUsers.AddRange(users);
+            }
+
+            // 计算总审批人数
+            var totalAssigneeCount = allUsers.Count;
+            Logger.Info($"节点 {nodeName} 共有 {totalAssigneeCount} 个审批人");
+
+            // 创建任务并检查自动通过
+            int order = 1;
+            int taskCount = 0;
+            foreach (var user in allUsers)
+            {
+                await CreateTaskWithAutoApproveCheckAsync(instanceId, nodeIdentifier, nodeName, nodeType,
+                    user.UserId, user.UserName, multiInstanceType, order++, formAuths, formData, node, nodeIndex, totalAssigneeCount);
+                taskCount++;
+                Logger.Info($"创建任务: 用户={user.UserName}, 用户ID={user.UserId}, 节点标识={nodeIdentifier}, 多实例类型={multiInstanceType}, 顺序={order - 1}");
             }
 
             Logger.Info($"节点 {nodeName} (标识={nodeIdentifier}) 创建了 {taskCount} 个待处理任务");
             await CurrentUnitOfWork.SaveChangesAsync();
         }
+
+
+
+
+        /// <summary>
+        /// 处理审批人为空的情况
+        /// </summary>
+        private async Task HandleNoAssigneeAsync(Guid instanceId, JObject node, long initiatorId, string formData,
+            string nodeIdentifier, string nodeName, int nodeType, int nodeIndex)
+        {
+            var noAuditorType = node["flowNodeNoAuditorType"]?.Value<int>() ?? 0;
+            Logger.Info($"审批人为空，处理方式: {noAuditorType}");
+
+            if (noAuditorType == 0) // 自动通过
+            {
+                await AddHistoryAsync(instanceId, nodeIdentifier, nodeName, nodeType,
+                    CMD_AUTO_APPROVED, null, "系统", "审批人为空，自动通过", formData, null);
+
+                var instance = await _flowInstanceRepository.GetAsync(instanceId);
+                var nextNode = node["childNode"] as JObject;
+                if (nextNode != null)
+                {
+                    await ProcessNodeAsync(instance, nextNode, instanceId, instance.BusinessId, instance.BusinessType, instance.InitiatorId, formData, nodeIndex + 1);
+                }
+                else
+                {
+                    await CompleteProcessAsync(instanceId, STATUS_APPROVED);
+                }
+                return;
+            }
+            else if (noAuditorType == 1) // 指定人员
+            {
+                var assignee = node["flowNodeNoAuditorAssignee"]?.Value<string>();
+                if (!string.IsNullOrEmpty(assignee) && long.TryParse(assignee, out long userId))
+                {
+                    var userName = await _userAppService.GetNameByUserId(userId);
+                    // 只有一个审批人，总人数为1
+                    await CreateTaskWithAutoApproveCheckAsync(instanceId, nodeIdentifier, nodeName, nodeType,
+                        userId, userName, 0, 1, node["formAuths"]?.ToString(), formData, node, nodeIndex, 1);
+                    Logger.Info($"创建任务(审批人为空指定人员): 用户={userName}, 用户ID={userId}, 节点标识={nodeIdentifier}");
+                }
+            }
+        }
+
+
+
+        /// <summary>
+        /// 创建任务并检查是否需要自动通过（如果审批人是自己）
+        /// </summary>
+        private async Task CreateTaskWithAutoApproveCheckAsync(Guid instanceId, string nodeId, string nodeName, int nodeType,
+            long userId, string userName, int multiInstanceType, int sortOrder, string formAuths,
+            string formData, JObject node, int nodeIndex, int totalAssigneeCount)
+        {
+            var currentUserId = AbpSession.UserId;
+            var isSelf = currentUserId.HasValue && currentUserId.Value == userId;
+
+            // 如果审批人是自己，需要根据多实例类型和总人数决定是否自动通过
+            if (isSelf)
+            {
+                Logger.Info($"审批人是自己: UserId={userId}, 节点={nodeName}, 多实例类型={multiInstanceType}, 总审批人数={totalAssigneeCount}");
+
+                var shouldAutoApprove = await ShouldAutoApproveForSelfAsync(instanceId, nodeId, nodeName, nodeType,
+                    userId, userName, multiInstanceType, totalAssigneeCount, formData, node, nodeIndex);
+
+                if (shouldAutoApprove)
+                {
+                    // 记录自动通过历史
+                    await AddHistoryAsync(instanceId, nodeId, nodeName, nodeType,
+                        CMD_AUTO_APPROVED, userId, userName, "系统自动通过（审批人是自己）", formData, formData);
+
+                    Logger.Info($"任务自动通过: UserId={userId}, 节点={nodeName}");
+
+                    // 处理节点完成逻辑
+                    await HandleSelfAutoApproveAsync(instanceId, nodeId, nodeName, nodeType,
+                        userId, userName, multiInstanceType, sortOrder, formData, node, nodeIndex, totalAssigneeCount);
+                    return;
+                }
+            }
+
+            // 正常创建任务
+            var task = new FlowNodeTasks
+            {
+                FlowInstanceId = instanceId,
+                NodeId = nodeId,
+                NodeName = nodeName,
+                NodeType = nodeType,
+                AssigneeId = userId,
+                AssigneeName = userName,
+                Status = TASK_PENDING,
+                MultiInstanceType = multiInstanceType,
+                SortOrder = sortOrder,
+                CreateTime = DateTime.Now,
+                FormAuths = formAuths
+            };
+            await _taskRepository.InsertAsync(task);
+            Logger.Info($"创建任务: 节点ID={nodeId}, 节点名称={nodeName}, 用户={userName}, 用户ID={userId}");
+        }
+
+        /// <summary>
+        /// 判断自己作为审批人时是否应该自动通过
+        /// </summary>
+        private async Task<bool> ShouldAutoApproveForSelfAsync(Guid instanceId, string nodeId, string nodeName, int nodeType,
+            long userId, string userName, int multiInstanceType, int totalAssigneeCount, string formData, JObject node, int nodeIndex)
+        {
+            // 核心逻辑：如果整个审批节点只有一个人（即只有自己），则自动通过
+            if (totalAssigneeCount == 1)
+            {
+                Logger.Info($"节点只有自己一个审批人，自动通过");
+                return true;
+            }
+
+            // 有多个审批人时，根据不同的多实例类型判断
+            switch (multiInstanceType)
+            {
+                case MULTI_INSTANCE_COUNTERSIGN: // 会签：需要所有人同意
+                                                 // 会签模式下，即使自己是其中一个审批人，也不能自动通过
+                                                 // 需要等待其他审批人处理
+                    Logger.Info($"会签模式，有{totalAssigneeCount}个审批人，自己是其中之一，不自动通过，等待其他人审批");
+                    return false;
+
+                case MULTI_INSTANCE_OR_SIGN: // 或签：一人同意即可
+                                             // 或签模式下，如果自己是其中一个审批人，且还没有人处理过，则自动通过
+                                             // 检查是否已经有其他任务被处理（通过或拒绝）
+                    var hasAnyHandled = await _taskRepository.GetAll()
+                        .AnyAsync(x => x.FlowInstanceId == instanceId
+                            && x.NodeId == nodeId
+                            && x.Status == TASK_HANDLED
+                            && (x.HandleCmd == CMD_APPROVED || x.HandleCmd == CMD_REJECTED));
+
+                    if (hasAnyHandled)
+                    {
+                        Logger.Info($"或签模式，但已有其他任务被处理，不再自动通过");
+                        return false;
+                    }
+
+                    Logger.Info($"或签模式，自己是其中一个审批人且无人处理过，自动通过");
+                    return true;
+
+                case MULTI_INSTANCE_SEQUENTIAL: // 依次审批：按顺序审批
+                                                // 依次审批模式下，检查当前用户是否为第一个待处理的审批人
+                                                // 获取当前节点的所有待处理任务（按顺序排序）
+                    var pendingTasksSorted = await _taskRepository.GetAll()
+                        .Where(x => x.FlowInstanceId == instanceId
+                            && x.NodeId == nodeId
+                            && x.Status == TASK_PENDING)
+                        .OrderBy(x => x.SortOrder)
+                        .ToListAsync();
+
+                    // 检查是否已经被处理过
+                    var hasHandled = await _taskRepository.GetAll()
+                        .AnyAsync(x => x.FlowInstanceId == instanceId
+                            && x.NodeId == nodeId
+                            && x.Status == TASK_HANDLED);
+
+                    // 如果没有待处理任务且没有被处理过，说明是第一次创建任务
+                    if (!pendingTasksSorted.Any() && !hasHandled)
+                    {
+                        // 当前用户应该是第一个审批人（因为按顺序创建）
+                        Logger.Info($"依次审批模式，有{totalAssigneeCount}个审批人，自己是第一个审批人，自动通过");
+                        return true;
+                    }
+
+                    // 如果有待处理任务，检查当前用户是不是第一个
+                    if (pendingTasksSorted.Any() && pendingTasksSorted.First().AssigneeId == userId)
+                    {
+                        // 检查是否已经被处理过
+                        if (!hasHandled)
+                        {
+                            Logger.Info($"依次审批模式，自己是当前待处理的第一个审批人，自动通过");
+                            return true;
+                        }
+                    }
+
+                    Logger.Info($"依次审批模式，不是当前待处理的第一个审批人，不自动通过");
+                    return false;
+
+                default: // 默认模式（单人审批），但这里totalAssigneeCount>1，理论上不会进入默认模式
+                    Logger.Info($"未知模式，有多个审批人，不自动通过");
+                    return false;
+            }
+        }
+
+        /// <summary>
+        /// 处理自己自动通过的逻辑
+        /// </summary>
+        private async Task HandleSelfAutoApproveAsync(Guid instanceId, string nodeId, string nodeName, int nodeType,
+            long userId, string userName, int multiInstanceType, int sortOrder, string formData, JObject node, int nodeIndex, int totalAssigneeCount)
+        {
+            // 创建已处理的任务记录
+            var handledTask = new FlowNodeTasks
+            {
+                FlowInstanceId = instanceId,
+                NodeId = nodeId,
+                NodeName = nodeName,
+                NodeType = nodeType,
+                AssigneeId = userId,
+                AssigneeName = userName,
+                Status = TASK_HANDLED,
+                MultiInstanceType = multiInstanceType,
+                SortOrder = sortOrder,
+                CreateTime = DateTime.Now,
+                HandleTime = DateTime.Now,
+                HandleCmd = CMD_AUTO_APPROVED,
+                HandleComment = "系统自动通过（审批人是自己）"
+            };
+            await _taskRepository.InsertAsync(handledTask);
+            await CurrentUnitOfWork.SaveChangesAsync();
+
+            // 获取流程实例
+            var instance = await _flowInstanceRepository.GetAsync(instanceId);
+
+            // 判断节点是否完成
+            bool isNodeCompleted = false;
+
+            // 如果只有自己一个人，直接完成节点
+            if (totalAssigneeCount == 1)
+            {
+                isNodeCompleted = true;
+                Logger.Info($"节点只有自己一个审批人，自动通过后节点完成");
+            }
+            else
+            {
+                // 有多个审批人时，根据多实例类型判断
+                switch (multiInstanceType)
+                {
+                    case MULTI_INSTANCE_COUNTERSIGN: // 会签
+                                                     // 会签模式：需要检查是否所有人都已处理
+                        var pendingCount = await _taskRepository.GetAll()
+                            .Where(x => x.FlowInstanceId == instanceId
+                                && x.NodeId == nodeId
+                                && x.Status == TASK_PENDING)
+                            .CountAsync();
+
+                        isNodeCompleted = pendingCount == 0;
+                        Logger.Info($"会签模式自动通过后，剩余待处理任务数: {pendingCount}, 节点完成: {isNodeCompleted}");
+                        break;
+
+                    case MULTI_INSTANCE_OR_SIGN: // 或签
+                                                 // 或签模式：自己自动通过后节点立即完成
+                                                 // 取消其他待处理任务
+                        var otherTasks = await _taskRepository.GetAll()
+                            .Where(x => x.FlowInstanceId == instanceId
+                                && x.NodeId == nodeId
+                                && x.Status == TASK_PENDING)
+                            .ToListAsync();
+
+                        foreach (var task in otherTasks)
+                        {
+                            task.Status = TASK_SKIPPED;
+                            await _taskRepository.UpdateAsync(task);
+                            Logger.Info($"或签模式，自动通过后取消其他待处理任务: TaskId={task.Id}");
+                        }
+                        await CurrentUnitOfWork.SaveChangesAsync();
+                        isNodeCompleted = true;
+                        break;
+
+                    case MULTI_INSTANCE_SEQUENTIAL: // 依次审批
+                                                    // 依次审批模式：检查下一个审批人
+                        var nextTask = await _taskRepository.GetAll()
+                            .Where(x => x.FlowInstanceId == instanceId
+                                && x.NodeId == nodeId
+                                && x.Status == TASK_PENDING)
+                            .OrderBy(x => x.SortOrder)
+                            .FirstOrDefaultAsync();
+
+                        isNodeCompleted = nextTask == null;
+                        Logger.Info($"依次审批模式自动通过后，下一个任务存在: {nextTask != null}, 节点完成: {isNodeCompleted}");
+                        break;
+
+                    default:
+                        isNodeCompleted = true;
+                        break;
+                }
+            }
+
+            if (isNodeCompleted)
+            {
+                Logger.Info($"节点完成，准备进入下一个节点");
+                // 创建一个临时的已完成任务对象用于传递到下一节点
+                var completedTaskForMove = new FlowNodeTasks
+                {
+                    FlowInstanceId = instanceId,
+                    NodeId = nodeId,
+                    NodeName = nodeName,
+                    NodeType = nodeType,
+                    MultiInstanceType = multiInstanceType
+                };
+                await MoveToNextNodeOrEndAsync(instance, completedTaskForMove);
+            }
+            else
+            {
+                Logger.Info($"节点未完成，等待其他任务处理");
+            }
+        }
+
+
+
 
         /// <summary>
         /// 创建抄送任务
@@ -699,6 +967,8 @@ namespace DeviceManagementSystem.WorkFlows.FlowInstance
                 Logger.Info($"节点未完成，等待其他任务处理");
             }
         }
+
+
 
         /// <summary>
         /// 处理回退操作

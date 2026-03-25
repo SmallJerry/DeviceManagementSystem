@@ -345,4 +345,95 @@ namespace DeviceManagementSystem.Maintenances.Dto
 
     #endregion
 
+
+    /// <summary>
+    /// 保养计划分组DTO
+    /// </summary>
+    public class MaintenancePlanGroupDto : MaintenancePlanDto
+    {
+        /// <summary>
+        /// 设备类型ID（用于分组）
+        /// </summary>
+        public Guid? DeviceTypeId { get; set; }
+
+        /// <summary>
+        /// 设备类型名称（用于分组显示）
+        /// </summary>
+        public string DeviceTypeName { get; set; }
+    }
+
+    /// <summary>
+    /// 保养计划查询输入
+    /// </summary>
+    public class MaintenancePlanQueryInput
+    {
+
+        /// <summary>
+        /// 搜索关键字（设备编码、设备名称、模板名称）
+        /// </summary>
+        public string SearchKey { get; set; }
+
+        /// <summary>
+        /// 设备类型ID（用于查询）
+        /// </summary>
+        public Guid? DeviceTypeId { get; set; }
+
+        /// <summary>
+        /// 保养等级
+        /// </summary>
+        public string MaintenanceLevel { get; set; }
+
+        /// <summary>
+        /// 状态
+        /// </summary>
+        public string Status { get; set; }
+    }
+
+    /// <summary>
+    /// 生成工单入参DTO
+    /// </summary>
+    public class GenerateTaskInput
+    {
+        /// <summary>
+        /// 计划ID
+        /// </summary>
+        public Guid PlanId { get; set; }
+        /// <summary>
+        /// 工单执行日期（当天及以后，默认当天）
+        /// </summary>
+        public DateTime? ExecuteDate { get; set; } = DateTime.Today;
+    }
+
+
+
+    /// <summary>
+    /// 生成保养工单输入
+    /// </summary>
+    public class GenerateMaintenanceTaskInput
+    {
+        /// <summary>
+        /// 保养计划ID
+        /// </summary>
+        public Guid PlanId { get; set; }
+
+        /// <summary>
+        /// 执行日期
+        /// </summary>
+        public DateTime ExecuteDate { get; set; }
+
+        /// <summary>
+        /// 来源类型
+        /// </summary>
+        public string SourceType { get; set; }
+
+        /// <summary>
+        /// 来源ID
+        /// </summary>
+        public Guid? SourceId { get; set; }
+
+        /// <summary>
+        /// 工单名称（可选）
+        /// </summary>
+        public string TaskName { get; set; }
+    }
 }

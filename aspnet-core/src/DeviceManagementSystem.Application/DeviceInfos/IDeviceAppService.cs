@@ -22,6 +22,13 @@ namespace DeviceManagementSystem.DeviceInfos
         /// <returns></returns>
         Task<CommonResult<Page<DeviceDto>>> GetPageList([FromQuery] DevicePageInput input);
 
+
+        /// <summary>
+        /// 获取设备简单列表（仅ID和名称）
+        /// </summary>
+        /// <returns></returns>
+        Task<CommonResult<List<DeviceSimpleDto>>> GetSimpleList();
+
         /// <summary>
         /// 获取设备详情
         /// </summary>

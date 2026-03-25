@@ -25,6 +25,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -913,8 +914,41 @@ namespace DeviceManagementSystem.DeviceInfos
         }
 
 
+
+
         /// <summary>
-        /// 获取设备二维码
+        /// 根据设备编码获取设备简略信息（用于扫码后根据编码获取设备信息）
+        /// </summary>
+        /// <param name="deviceCode"></param>
+        /// <returns></returns>
+        [DisableAuditing]
+        public async Task<CommonResult<DeviceSimpleDto>> GetByDeviceCode(string deviceCode)
+        {
+            try
+            {
+                var device =  await _deviceRepository.FirstOrDefaultAsync(it => string.Equals(it.DeviceCode, deviceCode));
+                if (device == null) {
+                return CommonResult<DeviceSimpleDto>.Error("没有找到相关设备");
+                }
+                return CommonResult<DeviceSimpleDto>.Success(new DeviceSimpleDto
+                {
+                    Id = device.Id,
+                    DeviceCode = device.DeviceCode,
+                    DeviceName = device.DeviceName,
+                    DeviceStatus = device.DeviceStatus
+                });
+            }
+            catch (Exception ex)
+            {
+                return CommonResult<DeviceSimpleDto>.Error("没有找到相关设备" + ex.Message);
+            }
+        }
+
+
+
+
+        /// <summary>
+        /// 获取设备二维码，实质存放的是设备编码，前端可以根据这个编码生成二维码图片
         /// </summary>
         [HttpGet]
         [DisableAuditing]
@@ -926,21 +960,11 @@ namespace DeviceManagementSystem.DeviceInfos
                 if (device == null)
                     return CommonResult<string>.Error("设备不存在");
 
-                var baseUrl = $"1";
-                var qrCodeUrl = $"{baseUrl}/device/info/{id}";
-
-                if (string.IsNullOrEmpty(device.QrCode))
-                {
-                    device.QrCode = qrCodeUrl;
-                    await _deviceRepository.UpdateAsync(device);
-                    await CurrentUnitOfWork.SaveChangesAsync();
-                }
-
-                return CommonResult<string>.Success("", qrCodeUrl);
+                var deviceCode = $"{device.DeviceCode}";
+                return CommonResult<string>.Success("", deviceCode);
             }
             catch (Exception ex)
             {
-                Logger.Error("获取设备二维码失败", ex);
                 return CommonResult<string>.Error("获取设备二维码失败:" + ex.Message);
             }
         }
@@ -2601,6 +2625,177 @@ namespace DeviceManagementSystem.DeviceInfos
                 return CommonResult<Page<MaintenanceTaskDto>>.Error($"获取设备保养履历失败: {ex.Message}");
             }
         }
+
+
+        #region 设备工单相关方法
+
+        /// <summary>
+        /// 获取设备的保养工单（待执行/执行中/计划）
+        /// </summary>
+        [HttpGet]
+        [DisableAuditing]
+        public async Task<CommonResult<Page<MaintenanceTaskDto>>> GetDeviceTasks([FromQuery] GetDeviceTasksInput input)
+        {
+            try
+            {
+                if (input.Size > 100)
+                    input.Size = 100;
+
+                // 查询设备关联的工单，排除已完成和已取消状态
+                var query = from t in _maintenanceTaskRepository.GetAll().AsNoTracking()
+                            where t.DeviceId == input.DeviceId
+                                  && (input.Status == null || t.Status == input.Status)
+                                  && (t.Status != "已完成" && t.Status != "已取消")
+                            join d in _deviceRepository.GetAll().AsNoTracking() on t.DeviceId equals d.Id into deviceJoin
+                            from d in deviceJoin.DefaultIfEmpty()
+                            join tm in _maintenanceTemplateRepository.GetAll().AsNoTracking() on t.TemplateId equals tm.Id into templateJoin
+                            from tm in templateJoin.DefaultIfEmpty()
+                            select new { Task = t, Device = d, Template = tm };
+
+                // 应用筛选条件
+                if (!string.IsNullOrWhiteSpace(input.TaskNo))
+                {
+                    query = query.Where(x => x.Task.TaskNo.Contains(input.TaskNo));
+                }
+
+                if (input.PlanStartDateBegin.HasValue)
+                {
+                    query = query.Where(x => x.Task.PlanStartDate >= input.PlanStartDateBegin.Value);
+                }
+
+                if (input.PlanStartDateEnd.HasValue)
+                {
+                    var endDate = input.PlanStartDateEnd.Value.AddDays(1).AddSeconds(-1);
+                    query = query.Where(x => x.Task.PlanStartDate <= endDate);
+                }
+
+                var total = await query.CountAsync();
+
+                var items = await query
+                    .OrderByDescending(x => x.Task.PlanStartDate)
+                    .Skip((input.Current - 1) * input.Size)
+                    .Take(input.Size)
+                    .ToListAsync();
+
+                var result = new List<MaintenanceTaskDto>();
+
+                foreach (var item in items)
+                {
+                    var dto = new MaintenanceTaskDto
+                    {
+                        Id = item.Task.Id,
+                        TaskNo = item.Task.TaskNo,
+                        TaskName = item.Task.TaskName,
+                        DeviceId = item.Task.DeviceId,
+                        DeviceCode = item.Device?.DeviceCode,
+                        DeviceName = item.Device?.DeviceName,
+                        TemplateId = item.Task.TemplateId,
+                        TemplateName = item.Template?.TemplateName,
+                        MaintenanceLevel = item.Task.MaintenanceLevel,
+                        MaintenanceLevelText = GetMaintenanceLevelText(item.Task.MaintenanceLevel),
+                        Status = item.Task.Status,
+                        PlanStartDate = item.Task.PlanStartDate,
+                        PlanEndDate = item.Task.PlanEndDate,
+                        ActualStartTime = item.Task.ActualStartTime,
+                        ActualEndTime = item.Task.ActualEndTime,
+                        IsMergedTask = item.Task.IsMergedTask,
+                        IsOverdue = item.Task.Status != "已完成" && item.Task.Status != "已取消"
+                                    && item.Task.PlanEndDate < DateTime.Today
+                    };
+
+                    // 解析执行人
+                    if (!string.IsNullOrEmpty(item.Task.ExecutorNames))
+                    {
+                        dto.ExecutorNames = item.Task.ExecutorNames.Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
+                    }
+
+                    result.Add(dto);
+                }
+
+                var page = new Page<MaintenanceTaskDto>(input.Current, input.Size, total)
+                {
+                    Records = result
+                };
+
+                return CommonResult<Page<MaintenanceTaskDto>>.Success(page);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("获取设备工单列表失败", ex);
+                return CommonResult<Page<MaintenanceTaskDto>>.Error($"获取设备工单列表失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 获取设备保养计划列表（增强版，包含剩余天数）
+        /// </summary>
+        [HttpGet]
+        [DisableAuditing]
+        public async Task<CommonResult<List<MaintenancePlanDetailDto>>> GetDeviceMaintenancePlans(Guid deviceId)
+        {
+            try
+            {
+                var relations = await _deviceMaintenancePlanRelationRepository.GetAll()
+                    .Where(x => x.DeviceId == deviceId)
+                    .ToListAsync();
+
+                if (!relations.Any())
+                    return CommonResult<List<MaintenancePlanDetailDto>>.Success(new List<MaintenancePlanDetailDto>());
+
+                var planIds = relations.Select(x => x.MaintenancePlanId).ToList();
+                var plans = await _maintenancePlanRepository.GetAll()
+                    .Where(x => planIds.Contains(x.Id))
+                    .ToDictionaryAsync(x => x.Id);
+
+                var templateIds = relations.Select(x => x.TemplateId).Distinct().ToList();
+                var templates = await _maintenanceTemplateRepository.GetAll()
+                    .Where(x => templateIds.Contains(x.Id))
+                    .ToDictionaryAsync(x => x.Id, x => x.TemplateName);
+
+                var result = new List<MaintenancePlanDetailDto>();
+
+                foreach (var relation in relations)
+                {
+                    if (!plans.TryGetValue(relation.MaintenancePlanId, out var plan))
+                        continue;
+
+                    templates.TryGetValue(relation.TemplateId, out var templateName);
+
+                    var dto = new MaintenancePlanDetailDto
+                    {
+                        Id = plan.Id,
+                        PlanName = plan.PlanName,
+                        TemplateId = relation.TemplateId,
+                        TemplateName = templateName,
+                        MaintenanceLevel = relation.MaintenanceLevel,
+                        MaintenanceLevelText = GetMaintenanceLevelText(relation.MaintenanceLevel),
+                        CycleType = plan.CycleType,
+                        CycleDays = plan.CycleDays,
+                        FirstMaintenanceDate = plan.FirstMaintenanceDate,
+                        NextMaintenanceDate = plan.NextMaintenanceDate,
+                        LastMaintenanceDate = plan.LastMaintenanceDate,
+                        Status = plan.Status,
+                        Remark = plan.Remark,
+                        RemainingDays = (plan.NextMaintenanceDate.Date - DateTime.Today).Days
+                    };
+
+                    result.Add(dto);
+                }
+
+                // 按等级排序
+                var levelOrder = new Dictionary<string, int> { { "月度", 1 }, { "季度", 2 }, { "半年度", 3 }, { "年度", 4 } };
+                result = result.OrderBy(x => levelOrder.GetValueOrDefault(x.MaintenanceLevel, 5)).ToList();
+
+                return CommonResult<List<MaintenancePlanDetailDto>>.Success(result);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("获取设备保养计划列表失败", ex);
+                return CommonResult<List<MaintenancePlanDetailDto>>.Error($"获取设备保养计划列表失败: {ex.Message}");
+            }
+        }
+
+        #endregion
 
 
 

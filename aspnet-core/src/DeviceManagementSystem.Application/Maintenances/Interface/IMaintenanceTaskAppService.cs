@@ -22,6 +22,11 @@ namespace DeviceManagementSystem.Maintenances.Interface
 
 
         /// <summary>
+        /// 根据保养计划ID获取工单详情
+        /// </summary>
+        Task<CommonResult<MaintenanceTaskDto>> GetByPlanId(Guid planId);
+
+        /// <summary>
         /// 获取工单详情
         /// </summary>
         Task<CommonResult<MaintenanceTaskDto>> GetById(Guid id);
@@ -57,11 +62,11 @@ namespace DeviceManagementSystem.Maintenances.Interface
         /// </summary>
         Task<CommonResult<int>> SendReminders();
 
-
-
         /// <summary>
-        /// 为指定计划生成工单
+        /// 手动生成工单
         /// </summary>
-        Task<CommonResult> GenerateTaskForPlan(Guid planId);
+        /// <param name="input"></param>
+        /// <returns></returns>
+        Task<CommonResult> GenerateManualWithDate(GenerateTaskInput input);
     }
 }

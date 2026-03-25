@@ -6,6 +6,9 @@ using System.Threading.Tasks;
 
 namespace DeviceManagementSystem.Maintenances.Dto
 {
+    /// <summary>
+    /// 保养统计查询条件
+    /// </summary>
     public class MaintenanceStatisticsInput
     {
         /// <summary>
